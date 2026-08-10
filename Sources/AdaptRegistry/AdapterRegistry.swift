@@ -67,7 +67,8 @@ public actor AdapterRegistry {
         weights: Data,
         trainedOn: TrainingWindow,
         parentVersion: Int? = nil,
-        evalReport: EvalReport? = nil
+        evalReport: EvalReport? = nil,
+        promptFormat: PromptFormatConvention? = nil
     ) throws -> AdapterVersion {
         let lineageID = lineage.lineageID
         let lineageDir = try lineageDirectory(for: lineageID)
@@ -117,7 +118,8 @@ public actor AdapterRegistry {
                 evalReport: evalReport,
                 status: .candidate,
                 weightsDigest: digest,
-                createdAt: Date()
+                createdAt: Date(),
+                promptFormat: promptFormat
             )
 
             // 3. version.json — last file before the version becomes visible.
