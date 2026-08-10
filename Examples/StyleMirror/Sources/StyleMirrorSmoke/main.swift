@@ -26,6 +26,7 @@ struct StyleMirrorSmoke {
         let skipPoison = args.contains("--skip-poison")
         let skipBlind = args.contains("--skip-blind")
         let skipCode = args.contains("--skip-code")
+        let appSim = args.contains("--app-sim")
 
         print("=== StyleMirrorSmoke (AdaptEngine) ===")
         do {
@@ -34,6 +35,13 @@ struct StyleMirrorSmoke {
             print("  registry: \(config.registryRoot.path)")
             print("  held-out: \(config.heldOutJSONL?.path ?? "(none)")")
             print("  steps:    \(steps)")
+            if appSim {
+                print("  mode:     app-sim (MainActor + awaited progress hop)")
+                try await MainActorAppSim.run(config: config)
+                print("")
+                print("=== smoke complete ===")
+                return
+            }
 
             let engine = try AdaptEngine(configuration: config, seed: 42)
 
@@ -131,6 +139,7 @@ struct StyleMirrorSmoke {
                                 mark.elapsed
                             )
                         )
+                        // No MainActor hop here — harness is not the app path.
                     }
                     let wallSec = durationSeconds(wallStart.duration(to: .now))
                     print(String(format: "  preparation wall=%.2fs", wallSec))
@@ -250,7 +259,49 @@ struct StyleMirrorSmoke {
         guard let idx = args.firstIndex(of: name), idx + 1 < args.count else { return nil }
         return Int(args[idx + 1])
     }
+}
 
+/// MainActor surface matching `DemoState.nextRound` + awaited progress hop.
+@MainActor
+private enum MainActorAppSim {
+    static func run(config: AdaptEngineConfiguration) async throws {
+        let wallStart = ContinuousClock.now
+        func mark(_ label: String) {
+            print(String(format: "  [+%.2fs] %@", durationSeconds(wallStart.duration(to: .now)), label))
+            fflush(stdout)
+        }
+
+        mark("building engine on MainActor")
+        let engine = try AdaptEngine(configuration: config, seed: 42)
+        let active = await engine.activeVersion()
+        mark("active=\(active.map { "v\($0.version)" } ?? "nil")")
+
+        let id = SampleCorpus.blindRounds[0].incoming.id
+        let progressBox = ProgressCollector()
+        mark("prepareBlindRound START")
+        let round = try await engine.prepareBlindRound(incomingEmailID: id) { event in
+            await MainActor.run {
+                progressBox.append(event)
+                print(
+                    String(
+                        format: "  [+%.2fs] progress hop landed %d/%d %@ (hits=%d)",
+                        durationSeconds(wallStart.duration(to: .now)),
+                        event.completed,
+                        event.total,
+                        event.unitLabel ?? "",
+                        progressBox.snapshot().count
+                    )
+                )
+                fflush(stdout)
+            }
+        }
+        mark("prepareBlindRound DONE candidates=\(round.candidates.count) progressHits=\(progressBox.snapshot().count)")
+
+        mark("second round START")
+        let id2 = SampleCorpus.blindRounds[min(1, SampleCorpus.blindRounds.count - 1)].incoming.id
+        _ = try await engine.prepareBlindRound(incomingEmailID: id2)
+        mark("second round DONE")
+    }
 }
 
 private func durationSeconds(_ duration: Duration) -> Double {

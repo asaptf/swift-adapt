@@ -373,7 +373,14 @@ public struct GenerationProgress: Sendable, Equatable, Hashable {
 }
 
 /// Callback for multi-step generation progress (blind test, code-switch).
-public typealias GenerationProgressHandler = @Sendable (GenerationProgress) -> Void
+///
+/// **Async by design.** The engine `await`s each invocation before starting the
+/// next unit of work, so a UI handler can hop to the MainActor and paint
+/// determinate counts mid-generation. A fire-and-forget hop (`Task { @MainActor
+/// in … }` without an await) is not sufficient: long Metal work can starve the
+/// hop until the whole operation finishes, leaving the indicator indeterminate.
+public typealias GenerationProgressHandler =
+    @Sendable (GenerationProgress) async -> Void
 
 // MARK: - Poisoning / eval gate
 

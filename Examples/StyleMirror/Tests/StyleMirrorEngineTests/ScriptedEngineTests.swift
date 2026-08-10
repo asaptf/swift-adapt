@@ -480,6 +480,26 @@ struct ScriptedEngineTests {
         #expect(events.contains(where: { $0.total > 0 && $0.completed >= 0 }))
     }
 
+    @Test("prepareBlindRound awaits async progress so MainActor hops land mid-flight")
+    func blindProgressAwaitedBeforeReturn() async throws {
+        // Pins the structural contract: the engine awaits the progress handler
+        // between units. A fire-and-forget hop (Task { @MainActor in … }) is not
+        // enough for the UI; an awaited MainActor.run must observe every event
+        // before prepareBlindRound returns.
+        let engine = ScriptedEngine(seed: 1)
+        let id = SampleCorpus.blindRounds[0].incoming.id
+        let box = ProgressBox()
+        let round = try await engine.prepareBlindRound(incomingEmailID: id) { event in
+            await MainActor.run {
+                box.append(event)
+            }
+        }
+        #expect(round.candidates.count == 3)
+        let events = box.snapshot()
+        #expect(events.count >= 3, "expected load/base/adapter progress on MainActor, got \(events.count)")
+        #expect(events.last?.completed == events.last?.total)
+    }
+
     @Test("codeSwitchingDemo progress handler is invoked at least once")
     func codeSwitchProgressHandlerMustBeInvoked() async {
         let engine = ScriptedEngine(seed: 1)

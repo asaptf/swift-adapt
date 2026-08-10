@@ -35,7 +35,12 @@ public struct BlindTestScreen: View {
                 }
             }
         }
-        .task {
+        // Re-run when the active adapter becomes known. Launch with
+        // `--screen blind` races `start()` (fills `activeVersion`) against this
+        // screen's first appearance; a one-shot task that saw `nil` never
+        // retried and left the work indicator spinning forever.
+        .task(id: state.activeVersion?.version ?? -1) {
+            guard state.activeVersion != nil else { return }
             if state.round == nil { await state.nextRound() }
         }
         .task(id: state.revealResult?.roundID) {

@@ -66,9 +66,9 @@ public protocol StyleMirrorEngine: Sendable {
     ///
     /// - Parameters:
     ///   - incomingEmailID: Corpus key from ``blindTestIncomingIDs``.
-    ///   - progress: Optional handler invoked on the engine's executor as each
-    ///     unit completes (`completed` climbs `1…total`, final event has
-    ///     `completed == total`).
+    ///   - progress: Optional **async** handler, awaited on the engine's executor
+    ///     as each unit completes (`completed` climbs `0…total`). Awaited before
+    ///     the next unit so a MainActor hop inside the handler can paint.
     func prepareBlindRound(
         incomingEmailID: String,
         progress: GenerationProgressHandler?

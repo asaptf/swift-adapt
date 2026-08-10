@@ -139,10 +139,16 @@ public final class DemoState {
     /// Why a scene has nothing to show, when the engine says so explicitly.
     public var unavailableReason: String?
 
-    /// Hops engine progress onto the main actor for the indicator.
+    /// Delivers engine progress onto the main actor for the indicator.
+    ///
+    /// The handler is **async** and the engine awaits it between units. Using
+    /// `await MainActor.run` (not a fire-and-forget `Task { @MainActor in … }`)
+    /// guarantees the determinate counts paint before the next generation unit
+    /// starts. A fire-and-forget hop was starved until the whole operation
+    /// finished, so the indicator stayed indeterminate for the full wall time.
     private func progressHandler() -> GenerationProgressHandler {
         { [weak self] progress in
-            Task { @MainActor in self?.workProgress = progress }
+            await MainActor.run { self?.workProgress = progress }
         }
     }
 
@@ -207,6 +213,13 @@ public final class DemoState {
         activeVersion = await engine.activeVersion()
         incomingIDs = await engine.blindTestIncomingIDs
         tally = await engine.blindTestTally()
+
+        // If `--screen blind` already opened the blind screen before IDs were
+        // ready, kick preparation now. BlindTestScreen also re-tasks on
+        // `activeVersion`; the `isPreparingRound` guard de-dupes the two paths.
+        if screen == .blindTest, round == nil, activeVersion != nil, !incomingIDs.isEmpty {
+            await nextRound()
+        }
 
         await withTaskGroup(of: Void.self) { group in
             group.addTask { [weak self] in await self?.observeNetwork() }
@@ -346,8 +359,29 @@ public final class DemoState {
 
     // MARK: Act 3
 
+    /// True while ``nextRound`` is in flight — prevents the launch race from
+    /// stacking two preparations when both `start()` and the blind screen's
+    /// `.task` notice that a round is needed.
+    private var isPreparingRound = false
+
     public func nextRound() async {
+        // Launch race: `--screen blind` can show BlindTestScreen and fire its
+        // `.task` before `start()` has filled `incomingIDs` / `activeVersion`.
+        // A one-shot `.task` that returns early then never retries left the
+        // indicator spinning forever with no model load (measured: 90s+ at
+        // ~80 MB RSS, zero progress events). Self-heal from the engine here.
+        if incomingIDs.isEmpty {
+            incomingIDs = await engine.blindTestIncomingIDs
+        }
+        if activeVersion == nil {
+            activeVersion = await engine.activeVersion()
+            versions = await engine.adapterVersions()
+        }
         guard !incomingIDs.isEmpty else { return }
+        guard !isPreparingRound else { return }
+        isPreparingRound = true
+        defer { isPreparingRound = false }
+
         let id = incomingIDs[roundIndex % incomingIDs.count]
         roundIndex += 1
         pickedCandidateID = nil

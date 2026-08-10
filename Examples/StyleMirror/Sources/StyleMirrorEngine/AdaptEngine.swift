@@ -510,8 +510,8 @@ extension AdaptEngine {
             let options = generationOptions()
             let total = Self.blindGenerationUnitCount
 
-            // Emit + yield before the (possibly cold) model load so the UI's
-            // MainActor Task hop can paint a determinate indicator.
+            // Await progress before the (possibly cold) model load so the UI
+            // paints a determinate indicator before Metal work begins.
             try await reportProgress(
                 progress,
                 GenerationProgress(completed: 0, total: total, unitLabel: "loading model")
@@ -993,16 +993,16 @@ extension AdaptEngine {
             }
         }
 
-        /// Invokes the progress handler and yields so a UI handler that hops to
-        /// the MainActor via `Task { @MainActor in … }` can land between units.
-        /// Without the yield, long Metal work can starve the hop and the
-        /// indicator stays indeterminate for the whole operation.
+        /// Awaits the progress handler so a UI hop onto the MainActor is part of
+        /// the engine's sequential unit boundary — not a fire-and-forget `Task`
+        /// that Metal work can starve until the whole operation returns.
         private func reportProgress(
             _ handler: GenerationProgressHandler?,
             _ event: GenerationProgress
         ) async throws {
-            handler?(event)
-            await Task.yield()
+            if let handler {
+                await handler(event)
+            }
         }
 
         /// Surfaces large length-class misses without silent trimming.

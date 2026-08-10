@@ -198,15 +198,14 @@ public final class ScriptedEngine: StyleMirrorEngine, Sendable {
             throw StyleMirrorError.notFound("blind round '\(incomingEmailID)'")
         }
         // Scripted path: two synthetic units (base, adapter), human is corpus.
-        // Yield after each event so a UI handler that hops to MainActor via
-        // `Task { @MainActor in … }` can land (same contract as AdaptEngine).
+        // Await each progress event (same contract as AdaptEngine) so a UI
+        // handler that hops to MainActor is guaranteed to paint between units.
         let total = 2
-        progress?(GenerationProgress(completed: 0, total: total, unitLabel: "base model"))
-        await Task.yield()
-        progress?(GenerationProgress(completed: 1, total: total, unitLabel: "base model"))
-        await Task.yield()
-        progress?(GenerationProgress(completed: 2, total: total, unitLabel: "adapter"))
-        await Task.yield()
+        if let progress {
+            await progress(GenerationProgress(completed: 0, total: total, unitLabel: "base model"))
+            await progress(GenerationProgress(completed: 1, total: total, unitLabel: "base model"))
+            await progress(GenerationProgress(completed: 2, total: total, unitLabel: "adapter"))
+        }
         return await state.prepareBlindRound(fixture: fixture)
     }
 
@@ -226,20 +225,27 @@ public final class ScriptedEngine: StyleMirrorEngine, Sendable {
         let canned = SampleCorpus.codeSwitch
         let total = DemoLanguage.allCases.count * 2
         var completed = 0
-        progress?(GenerationProgress(completed: 0, total: total, unitLabel: "loading"))
-        await Task.yield()
+        if let progress {
+            await progress(GenerationProgress(completed: 0, total: total, unitLabel: "loading"))
+        }
         for language in DemoLanguage.allCases {
             let name = language.displayName.lowercased()
             completed += 1
-            progress?(
-                GenerationProgress(completed: completed, total: total, unitLabel: "\(name) / base")
-            )
-            await Task.yield()
+            if let progress {
+                await progress(
+                    GenerationProgress(completed: completed, total: total, unitLabel: "\(name) / base")
+                )
+            }
             completed += 1
-            progress?(
-                GenerationProgress(completed: completed, total: total, unitLabel: "\(name) / adapter")
-            )
-            await Task.yield()
+            if let progress {
+                await progress(
+                    GenerationProgress(
+                        completed: completed,
+                        total: total,
+                        unitLabel: "\(name) / adapter"
+                    )
+                )
+            }
         }
         return canned
     }
