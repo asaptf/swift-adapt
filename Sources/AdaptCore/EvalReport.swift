@@ -24,11 +24,7 @@ public struct EvalReport: Codable, Sendable, Hashable {
         self.notes = notes
     }
 
-    public init(from decoder: Decoder) throws {
-        let container = try decoder.container(keyedBy: CodingKeys.self)
-        // All fields optional with nil defaults — legacy/minimal fixtures decode.
-        primaryScore = try container.decodeIfPresent(Double.self, forKey: .primaryScore)
-        passedGate = try container.decodeIfPresent(Bool.self, forKey: .passedGate)
-        notes = try container.decodeIfPresent(String.self, forKey: .notes)
-    }
+    // Synthesized `Codable` is enough: optional properties decode missing keys as
+    // `nil`, and `JSONDecoder` ignores unknown keys. A hand-written `init(from:)`
+    // would be redundant and drift-prone.
 }

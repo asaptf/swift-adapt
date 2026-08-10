@@ -49,6 +49,10 @@ public struct LoRAConfig: Codable, Sendable, Hashable {
 
     /// Creates a LoRA configuration with upstream-compatible defaults.
     ///
+    /// Single unambiguous entry point: `LoRAConfig()` uses all defaults.
+    /// Pass `loraParameters:` when you already have a nested struct; otherwise
+    /// use the rank/scale/keys overloads below.
+    ///
     /// - Parameters:
     ///   - numLayers: Layers to adapt (default 16).
     ///   - fineTuneType: `.lora` or `.dora` (default `.lora`).
@@ -63,9 +67,13 @@ public struct LoRAConfig: Codable, Sendable, Hashable {
         self.loraParameters = loraParameters
     }
 
-    /// Convenience initializer for the common rank/scale case.
+    /// Convenience for the common rank/scale case.
+    ///
+    /// `rank` is required so this overload never competes with `LoRAConfig()` —
+    /// previously both initializers defaulted every parameter and resolution
+    /// relied on Swift’s fragile “fewer defaults” tie-break.
     public init(
-        rank: Int = 8,
+        rank: Int,
         scale: Float = 10.0,
         keys: [String]? = nil,
         numLayers: Int = 16,

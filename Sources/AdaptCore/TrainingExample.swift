@@ -19,18 +19,22 @@ public struct TrainingExample: Codable, Sendable, Hashable, Identifiable {
     public let source: SignalSource
 
     /// Creates a training example.
+    ///
+    /// - Parameter weight: Importance weight. When `nil` (the default), uses
+    ///   `source.defaultWeight` from the §4.2 signal table. Pass an explicit
+    ///   value to override.
     public init(
         id: UUID = UUID(),
         prompt: String,
         completion: String,
-        weight: Double = 1.0,
+        weight: Double? = nil,
         capturedAt: Date = Date(),
         source: SignalSource
     ) {
         self.id = id
         self.prompt = prompt
         self.completion = completion
-        self.weight = weight
+        self.weight = weight ?? source.defaultWeight
         self.capturedAt = capturedAt
         self.source = source
     }
