@@ -137,12 +137,15 @@ public final class AdaptEngine: StyleMirrorEngine, Sendable {
         await state.activeVersion()
     }
 
-    public func prepareBlindRound(incomingEmailID: String) async throws -> BlindTestRound {
+    public func prepareBlindRound(
+        incomingEmailID: String,
+        progress: GenerationProgressHandler?
+    ) async throws -> BlindTestRound {
         guard let fixture = SampleCorpus.blindRounds.first(where: { $0.incoming.id == incomingEmailID })
         else {
             throw StyleMirrorError.notFound("blind round '\(incomingEmailID)'")
         }
-        return try await state.prepareBlindRound(fixture: fixture)
+        return try await state.prepareBlindRound(fixture: fixture, progress: progress)
     }
 
     public func submitBlindGuess(roundID: UUID, candidateID: UUID) async throws -> BlindTestGuessResult {
@@ -153,8 +156,8 @@ public final class AdaptEngine: StyleMirrorEngine, Sendable {
         await state.tally
     }
 
-    public func codeSwitchingDemo() async -> CodeSwitchResult {
-        await state.codeSwitchingDemo()
+    public func codeSwitchingDemo(progress: GenerationProgressHandler?) async -> CodeSwitchResult {
+        await state.codeSwitchingDemo(progress: progress)
     }
 
     public func runPoisoningScenario() async -> GateOutcome {
@@ -464,7 +467,13 @@ extension AdaptEngine {
 
         // MARK: Blind test
 
-        func prepareBlindRound(fixture: SampleCorpus.BlindRoundFixture) async throws -> BlindTestRound {
+        /// Two model generations (base, adapter). Human body is corpus, not generated.
+        static let blindGenerationUnitCount = 2
+
+        func prepareBlindRound(
+            fixture: SampleCorpus.BlindRoundFixture,
+            progress: GenerationProgressHandler?
+        ) async throws -> BlindTestRound {
             guard await activeVersion() != nil else {
                 throw StyleMirrorError.invalidState(
                     "no active adapter — train one (or seed the demo registry) before the blind test"
@@ -475,6 +484,9 @@ extension AdaptEngine {
             // Structural equality: one prompt string for both sides.
             let prompt = BlindReplyPrompt.generationPrompt(for: fixture.incoming)
             let options = generationOptions()
+            let total = Self.blindGenerationUnitCount
+
+            progress?(GenerationProgress(completed: 0, total: total, unitLabel: "loading model"))
 
             let session = try await DemoModelLoader.makeSession(
                 modelID: configuration.modelID,
@@ -492,6 +504,9 @@ extension AdaptEngine {
                 )
             }
             try assertLengthClass(text: baseText, role: .baseModel)
+            progress?(
+                GenerationProgress(completed: 1, total: total, unitLabel: "base model")
+            )
 
             try await session.reload()
             let adaptedText: String
@@ -503,6 +518,9 @@ extension AdaptEngine {
                 )
             }
             try assertLengthClass(text: adaptedText, role: .adaptedModel)
+            progress?(
+                GenerationProgress(completed: 2, total: total, unitLabel: "adapter")
+            )
 
             let humanText = fixture.human.trimmingCharacters(in: .whitespacesAndNewlines)
 
@@ -539,11 +557,20 @@ extension AdaptEngine {
 
         // MARK: Code-switching
 
-        func codeSwitchingDemo() async -> CodeSwitchResult {
+        /// Three languages × base + adapter.
+        static let codeSwitchGenerationUnitCount = DemoLanguage.allCases.count * 2
+
+        func codeSwitchingDemo(progress: GenerationProgressHandler?) async -> CodeSwitchResult {
             let request = SampleCorpus.codeSwitch.requestSummary
             guard let activeBefore = await activeVersion() else {
-                return CodeSwitchResult(requestSummary: request, languages: [])
+                return .unavailable(
+                    requestSummary: request,
+                    reason: "no active adapter — train one (or seed the demo registry) before code-switching"
+                )
             }
+
+            let total = Self.codeSwitchGenerationUnitCount
+            progress?(GenerationProgress(completed: 0, total: total, unitLabel: "loading model"))
 
             do {
                 let session = try await DemoModelLoader.makeSession(
@@ -554,6 +581,7 @@ extension AdaptEngine {
                 )
                 let options = generationOptions()
                 var results: [CodeSwitchLanguageResult] = []
+                var completed = 0
 
                 for language in DemoLanguage.allCases {
                     // One prompt-construction path for both generations.
@@ -561,18 +589,51 @@ extension AdaptEngine {
                         requestSummary: request,
                         language: language
                     )
+                    let langName = language.displayName.lowercased()
 
                     // Base (session started / restored without adapter).
+                    // Length-class soft assert is blind-test only: code-switch
+                    // columns intentionally show a short personal adapter style
+                    // against a stiffer base, and a soft floor of 20 words was
+                    // rejecting real adapter replies (~19 words) as empty success.
                     try await registry.clearActive(lineage: lineage)
                     try await session.reload()
-                    let baseText = try await session.generateText(prompt: prompt, options: options)
-                    try assertLengthClass(text: baseText, role: .baseModel)
+                    let baseText: String
+                    do {
+                        baseText = try await session.generateText(prompt: prompt, options: options)
+                    } catch {
+                        throw StyleMirrorError.generationFailed(
+                            "\(langName) / base: \(error.localizedDescription)"
+                        )
+                    }
+                    completed += 1
+                    progress?(
+                        GenerationProgress(
+                            completed: completed,
+                            total: total,
+                            unitLabel: "\(langName) / base"
+                        )
+                    )
 
                     // Adapter.
                     try await registry.promote(lineage: lineage, version: activeBefore.version)
                     try await session.reload()
-                    let adaptedText = try await session.generateText(prompt: prompt, options: options)
-                    try assertLengthClass(text: adaptedText, role: .adaptedModel)
+                    let adaptedText: String
+                    do {
+                        adaptedText = try await session.generateText(prompt: prompt, options: options)
+                    } catch {
+                        throw StyleMirrorError.generationFailed(
+                            "\(langName) / adapter: \(error.localizedDescription)"
+                        )
+                    }
+                    completed += 1
+                    progress?(
+                        GenerationProgress(
+                            completed: completed,
+                            total: total,
+                            unitLabel: "\(langName) / adapter"
+                        )
+                    )
 
                     results.append(
                         CodeSwitchLanguageResult(
@@ -588,15 +649,22 @@ extension AdaptEngine {
                     try await registry.promote(lineage: lineage, version: activeBefore.version)
                 }
 
-                return CodeSwitchResult(requestSummary: request, languages: results)
+                return CodeSwitchResult(
+                    requestSummary: request,
+                    languages: results,
+                    unavailabilityReason: nil
+                )
             } catch {
                 // Best-effort restore of active pointer.
                 try? await registry.promote(lineage: lineage, version: activeBefore.version)
-                fputs(
-                    "AdaptEngine.codeSwitchingDemo failed: \(error.localizedDescription)\n",
-                    stderr
-                )
-                return CodeSwitchResult(requestSummary: request, languages: [])
+                let reason: String
+                if let styleError = error as? StyleMirrorError {
+                    reason = styleError.errorDescription ?? String(describing: styleError)
+                } else {
+                    reason = error.localizedDescription
+                }
+                fputs("AdaptEngine.codeSwitchingDemo failed: \(reason)\n", stderr)
+                return .unavailable(requestSummary: request, reason: reason)
             }
         }
 

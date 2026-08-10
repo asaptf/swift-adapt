@@ -299,17 +299,81 @@ public struct CodeSwitchLanguageResult: Sendable, Equatable, Hashable {
 }
 
 /// Full code-switching scene payload for one shared request.
+///
+/// Success and unavailability are distinct. An empty `languages` array is never
+/// a silent success: when the engine cannot produce pairs, `unavailabilityReason`
+/// names why. Callers must not treat empty languages as "nothing to show" without
+/// reading the reason.
 public struct CodeSwitchResult: Sendable, Equatable {
     /// Shared intent / request summarized for the audience.
     public let requestSummary: String
     /// Per-language base vs. adapted pairs (typically en / es / ru).
     public let languages: [CodeSwitchLanguageResult]
+    /// Non-`nil` when the demo could not produce language pairs.
+    ///
+    /// When set, `languages` is empty. When `nil`, `languages` is non-empty on a
+    /// successful path.
+    public let unavailabilityReason: String?
 
-    public init(requestSummary: String, languages: [CodeSwitchLanguageResult]) {
+    /// Whether the result carries base/adapted pairs to display.
+    public var isAvailable: Bool {
+        unavailabilityReason == nil && !languages.isEmpty
+    }
+
+    public init(
+        requestSummary: String,
+        languages: [CodeSwitchLanguageResult],
+        unavailabilityReason: String? = nil
+    ) {
         self.requestSummary = requestSummary
         self.languages = languages
+        self.unavailabilityReason = unavailabilityReason
+    }
+
+    /// Builds an explicit unavailable result (never a silent empty success).
+    public static func unavailable(
+        requestSummary: String,
+        reason: String
+    ) -> CodeSwitchResult {
+        CodeSwitchResult(
+            requestSummary: requestSummary,
+            languages: [],
+            unavailabilityReason: reason
+        )
     }
 }
+
+// MARK: - Generation progress
+
+/// One unit of multi-step generation work (blind test, code-switching).
+///
+/// Mirrors training's completed/total shape so the UI can show "step 3 of 6"
+/// without inventing a percentage. Emitted in order; the final event has
+/// `completed == total`.
+public struct GenerationProgress: Sendable, Equatable, Hashable {
+    /// Units finished so far (0…`total`).
+    public let completed: Int
+    /// Total units in this operation.
+    public let total: Int
+    /// Optional label for the unit just finished or about to run
+    /// (e.g. `"english / base"`, `"base model"`).
+    public let unitLabel: String?
+
+    public init(completed: Int, total: Int, unitLabel: String? = nil) {
+        self.completed = completed
+        self.total = total
+        self.unitLabel = unitLabel
+    }
+
+    /// Fraction complete in `0...1` when `total > 0`.
+    public var fractionComplete: Double {
+        guard total > 0 else { return 1 }
+        return min(1, Double(completed) / Double(total))
+    }
+}
+
+/// Callback for multi-step generation progress (blind test, code-switch).
+public typealias GenerationProgressHandler = @Sendable (GenerationProgress) -> Void
 
 // MARK: - Poisoning / eval gate
 

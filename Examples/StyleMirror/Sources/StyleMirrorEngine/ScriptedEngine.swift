@@ -34,12 +34,20 @@ public final class ScriptedEngine: StyleMirrorEngine, Sendable {
     private let state: State
     private let seed: UInt64
     private let lineage: AdapterLineage
+    /// When non-`nil`, ``codeSwitchingDemo(progress:)`` returns an unavailable
+    /// result with this reason instead of canned languages (offline failure path).
+    private let codeSwitchFailureReason: String?
 
     /// Creates a scripted engine.
     ///
-    /// - Parameter seed: Master seed for loss curves and blind-test shuffles.
-    public init(seed: UInt64 = 42) {
+    /// - Parameters:
+    ///   - seed: Master seed for loss curves and blind-test shuffles.
+    ///   - codeSwitchFailureReason: When set, code-switching returns
+    ///     ``CodeSwitchResult/unavailable(requestSummary:reason:)`` so tests can
+    ///     exercise the explicit-failure path without a model.
+    public init(seed: UInt64 = 42, codeSwitchFailureReason: String? = nil) {
         self.seed = seed
+        self.codeSwitchFailureReason = codeSwitchFailureReason
         self.lineage = AdapterLineage(
             taskID: "email-style",
             baseModelID: "mlx-community/Qwen3-0.6B-4bit",
@@ -182,10 +190,18 @@ public final class ScriptedEngine: StyleMirrorEngine, Sendable {
         await state.activeVersion
     }
 
-    public func prepareBlindRound(incomingEmailID: String) async throws -> BlindTestRound {
+    public func prepareBlindRound(
+        incomingEmailID: String,
+        progress: GenerationProgressHandler?
+    ) async throws -> BlindTestRound {
         guard let fixture = SampleCorpus.blindRounds.first(where: { $0.incoming.id == incomingEmailID }) else {
             throw StyleMirrorError.notFound("blind round '\(incomingEmailID)'")
         }
+        // Scripted path: two synthetic units (base, adapter), human is corpus.
+        let total = 2
+        progress?(GenerationProgress(completed: 0, total: total, unitLabel: "base model"))
+        progress?(GenerationProgress(completed: 1, total: total, unitLabel: "base model"))
+        progress?(GenerationProgress(completed: 2, total: total, unitLabel: "adapter"))
         return await state.prepareBlindRound(fixture: fixture)
     }
 
@@ -197,8 +213,27 @@ public final class ScriptedEngine: StyleMirrorEngine, Sendable {
         await state.tally
     }
 
-    public func codeSwitchingDemo() async -> CodeSwitchResult {
-        SampleCorpus.codeSwitch
+    public func codeSwitchingDemo(progress: GenerationProgressHandler?) async -> CodeSwitchResult {
+        let request = SampleCorpus.codeSwitch.requestSummary
+        if let reason = codeSwitchFailureReason {
+            return .unavailable(requestSummary: request, reason: reason)
+        }
+        let canned = SampleCorpus.codeSwitch
+        let total = DemoLanguage.allCases.count * 2
+        var completed = 0
+        progress?(GenerationProgress(completed: 0, total: total, unitLabel: "loading"))
+        for language in DemoLanguage.allCases {
+            let name = language.displayName.lowercased()
+            completed += 1
+            progress?(
+                GenerationProgress(completed: completed, total: total, unitLabel: "\(name) / base")
+            )
+            completed += 1
+            progress?(
+                GenerationProgress(completed: completed, total: total, unitLabel: "\(name) / adapter")
+            )
+        }
+        return canned
     }
 
     public func runPoisoningScenario() async -> GateOutcome {

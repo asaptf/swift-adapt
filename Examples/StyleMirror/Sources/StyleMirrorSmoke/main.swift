@@ -117,7 +117,25 @@ struct StyleMirrorSmoke {
                 print("--- Act 3: blind test ---")
                 let id = SampleCorpus.blindRounds[0].incoming.id
                 do {
-                    let round = try await engine.prepareBlindRound(incomingEmailID: id)
+                    let wallStart = ContinuousClock.now
+                    let progressBox = ProgressCollector()
+                    let round = try await engine.prepareBlindRound(incomingEmailID: id) { event in
+                        progressBox.append(event)
+                        print(
+                            "  progress: \(event.completed)/\(event.total)\(event.unitLabel.map { " (\($0))" } ?? "")"
+                        )
+                    }
+                    let wall = wallStart.duration(to: .now)
+                    let wallSec =
+                        Double(wall.components.seconds)
+                        + Double(wall.components.attoseconds) / 1e18
+                    print(String(format: "  preparation wall=%.2fs", wallSec))
+                    let progressEvents = progressBox.snapshot()
+                    if let last = progressEvents.last {
+                        print(
+                            "  progress events: \(progressEvents.count) (final \(last.completed)/\(last.total))"
+                        )
+                    }
                     print("  incoming: \(round.incoming.subject)")
                     for (index, candidate) in round.candidates.enumerated() {
                         let label = Character(UnicodeScalar(65 + index)!)
@@ -134,20 +152,41 @@ struct StyleMirrorSmoke {
 
             if !skipCode {
                 print("")
-                print("--- Code-switching (one language sample) ---")
-                let result = await engine.codeSwitchingDemo()
-                if let en = result.languages.first(where: { $0.language == .english })
-                    ?? result.languages.first
-                {
-                    print("  language: \(en.language.displayName)")
+                print("--- Code-switching (all languages) ---")
+                let wallStart = ContinuousClock.now
+                let progressBox = ProgressCollector()
+                let result = await engine.codeSwitchingDemo { event in
+                    progressBox.append(event)
                     print(
-                        "  base:    \(en.baseReply.count) chars — \(preview(en.baseReply, max: 120))"
+                        "  progress: \(event.completed)/\(event.total)\(event.unitLabel.map { " (\($0))" } ?? "")"
                     )
-                    print(
-                        "  adapter: \(en.adaptedReply.count) chars — \(preview(en.adaptedReply, max: 120))"
-                    )
+                }
+                let wall = wallStart.duration(to: .now)
+                let wallSec =
+                    Double(wall.components.seconds)
+                    + Double(wall.components.attoseconds) / 1e18
+                print(String(format: "  wall=%.2fs", wallSec))
+                if let reason = result.unavailabilityReason {
+                    print("  UNAVAILABLE: \(reason)")
+                } else if result.languages.isEmpty {
+                    print("  (no language results — engine returned empty without a reason)")
                 } else {
-                    print("  (no language results)")
+                    print("  languages: \(result.languages.count)")
+                    for pair in result.languages {
+                        print("  --- \(pair.language.displayName) ---")
+                        print(
+                            "  base:    \(pair.baseReply.count) chars — \(preview(pair.baseReply, max: 120))"
+                        )
+                        print(
+                            "  adapter: \(pair.adaptedReply.count) chars — \(preview(pair.adaptedReply, max: 120))"
+                        )
+                    }
+                    let progressEvents = progressBox.snapshot()
+                    if let last = progressEvents.last {
+                        print(
+                            "  progress events: \(progressEvents.count) (final \(last.completed)/\(last.total))"
+                        )
+                    }
                 }
             }
 
@@ -182,5 +221,24 @@ struct StyleMirrorSmoke {
     private static func intFlag(_ name: String, in args: [String]) -> Int? {
         guard let idx = args.firstIndex(of: name), idx + 1 < args.count else { return nil }
         return Int(args[idx + 1])
+    }
+}
+
+/// Thread-safe progress event bag for the smoke harness (progress callbacks
+/// may run off the main task).
+private final class ProgressCollector: @unchecked Sendable {
+    private let lock = NSLock()
+    private var events: [GenerationProgress] = []
+
+    func append(_ event: GenerationProgress) {
+        lock.lock()
+        events.append(event)
+        lock.unlock()
+    }
+
+    func snapshot() -> [GenerationProgress] {
+        lock.lock()
+        defer { lock.unlock() }
+        return events
     }
 }

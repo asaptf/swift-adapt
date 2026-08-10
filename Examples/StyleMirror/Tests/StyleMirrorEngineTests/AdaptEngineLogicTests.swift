@@ -299,6 +299,31 @@ struct AdaptEngineErrorPathTests {
         }
     }
 
+    @Test("codeSwitchingDemo without active adapter returns unavailable with reason")
+    func codeSwitchWithoutActive() async throws {
+        let root = FileManager.default.temporaryDirectory
+            .appendingPathComponent("style-mirror-codeswitch-\(UUID().uuidString)", isDirectory: true)
+        let config = AdaptEngineConfiguration(registryRoot: root, heldOutJSONL: nil)
+        let engine = try AdaptEngine(configuration: config, seed: 1)
+        let result = await engine.codeSwitchingDemo()
+        #expect(result.languages.isEmpty)
+        #expect(!result.isAvailable)
+        #expect(result.unavailabilityReason != nil)
+        #expect(result.unavailabilityReason?.contains("no active adapter") == true)
+        #expect(result.requestSummary == SampleCorpus.codeSwitch.requestSummary)
+    }
+
+    @Test("CodeSwitchResult.unavailable never looks like a silent empty success")
+    func codeSwitchUnavailableFactory() {
+        let result = CodeSwitchResult.unavailable(
+            requestSummary: "Decline a meeting.",
+            reason: "model unavailable: offline"
+        )
+        #expect(result.languages.isEmpty)
+        #expect(!result.isAvailable)
+        #expect(result.unavailabilityReason == "model unavailable: offline")
+    }
+
     @Test("train with empty examples finishes without gate outcome")
     func trainEmptyExamples() async throws {
         let root = FileManager.default.temporaryDirectory

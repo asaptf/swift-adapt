@@ -398,6 +398,8 @@ struct ScriptedEngineTests {
         let engine = ScriptedEngine(seed: 1)
         let result = await engine.codeSwitchingDemo()
         #expect(result.languages.count == 3)
+        #expect(result.isAvailable)
+        #expect(result.unavailabilityReason == nil)
         let langs = Set(result.languages.map(\.language))
         #expect(langs == [.english, .spanish, .russian])
         for pair in result.languages {
@@ -405,6 +407,61 @@ struct ScriptedEngineTests {
             #expect(!pair.adaptedReply.isEmpty)
             #expect(pair.baseReply != pair.adaptedReply)
         }
+    }
+
+    @Test("code-switching failure surfaces a reason instead of empty success")
+    func codeSwitchFailureReason() async {
+        let reason = "simulated generation failure for tests"
+        let engine = ScriptedEngine(seed: 1, codeSwitchFailureReason: reason)
+        let result = await engine.codeSwitchingDemo()
+        #expect(result.languages.isEmpty)
+        #expect(!result.isAvailable)
+        #expect(result.unavailabilityReason == reason)
+        #expect(result.requestSummary == SampleCorpus.codeSwitch.requestSummary)
+    }
+
+    @Test("code-switching progress events are ordered and end at total")
+    func codeSwitchProgressOrdered() async {
+        let engine = ScriptedEngine(seed: 1)
+        let box = ProgressBox()
+        let result = await engine.codeSwitchingDemo { event in
+            box.append(event)
+        }
+        #expect(result.isAvailable)
+        let events = box.snapshot()
+        #expect(!events.isEmpty)
+        // Completed is non-decreasing and stays within 0…total.
+        var previous = -1
+        for event in events {
+            #expect(event.total == 6)
+            #expect(event.completed >= previous)
+            #expect(event.completed <= event.total)
+            previous = event.completed
+        }
+        #expect(events.last?.completed == events.last?.total)
+        #expect(events.last?.total == 6)
+    }
+
+    @Test("blind-round progress events are ordered and end at total")
+    func blindProgressOrdered() async throws {
+        let engine = ScriptedEngine(seed: 1)
+        let id = SampleCorpus.blindRounds[0].incoming.id
+        let box = ProgressBox()
+        let round = try await engine.prepareBlindRound(incomingEmailID: id) { event in
+            box.append(event)
+        }
+        #expect(round.candidates.count == 3)
+        let events = box.snapshot()
+        #expect(!events.isEmpty)
+        var previous = -1
+        for event in events {
+            #expect(event.total == 2)
+            #expect(event.completed >= previous)
+            #expect(event.completed <= event.total)
+            previous = event.completed
+        }
+        #expect(events.last?.completed == 2)
+        #expect(events.last?.total == 2)
     }
 
     // MARK: - Outbound meter honesty
@@ -419,5 +476,23 @@ struct ScriptedEngineTests {
         await meter.recordOutbound(bytes: 128)
         #expect(await meter.bytesSent == 128)
         #expect(await meter.operationCount == 1)
+    }
+}
+
+/// Collects ``GenerationProgress`` from ``@Sendable`` handlers in tests.
+private final class ProgressBox: @unchecked Sendable {
+    private let lock = NSLock()
+    private var events: [GenerationProgress] = []
+
+    func append(_ event: GenerationProgress) {
+        lock.lock()
+        events.append(event)
+        lock.unlock()
+    }
+
+    func snapshot() -> [GenerationProgress] {
+        lock.lock()
+        defer { lock.unlock() }
+        return events
     }
 }

@@ -59,8 +59,20 @@ public protocol StyleMirrorEngine: Sendable {
     /// Prepares a round: loads the incoming email, builds three candidates, shuffles
     /// with the engine seed (reproducible), and retains the role map internally.
     ///
-    /// - Parameter incomingEmailID: Corpus key from ``blindTestIncomingIDs``.
-    func prepareBlindRound(incomingEmailID: String) async throws -> BlindTestRound
+    /// Reports progress as each model generation completes (base, then adapter —
+    /// two units; the human reply is corpus, not generated). Throws a
+    /// ``StyleMirrorError`` with a named reason when the round cannot be built;
+    /// never returns a half-empty success.
+    ///
+    /// - Parameters:
+    ///   - incomingEmailID: Corpus key from ``blindTestIncomingIDs``.
+    ///   - progress: Optional handler invoked on the engine's executor as each
+    ///     unit completes (`completed` climbs `1…total`, final event has
+    ///     `completed == total`).
+    func prepareBlindRound(
+        incomingEmailID: String,
+        progress: GenerationProgressHandler?
+    ) async throws -> BlindTestRound
 
     /// Records an audience guess and returns the reveal plus updated tally.
     ///
@@ -75,7 +87,14 @@ public protocol StyleMirrorEngine: Sendable {
     // MARK: Code-switching
 
     /// Same request answered in each of the user's languages, base vs. adapted.
-    func codeSwitchingDemo() async -> CodeSwitchResult
+    ///
+    /// Six generation units (3 languages × base + adapter). Progress is reported
+    /// via `progress` when provided. On failure returns
+    /// ``CodeSwitchResult/unavailable(requestSummary:reason:)`` — never an empty
+    /// success that looks like "nothing to show".
+    ///
+    /// - Parameter progress: Optional handler for unit progress (`1…6`).
+    func codeSwitchingDemo(progress: GenerationProgressHandler?) async -> CodeSwitchResult
 
     // MARK: Poisoning / eval gate
 
@@ -123,4 +142,18 @@ public protocol StyleMirrorEngine: Sendable {
     /// Whether the active version is the best one we measured (lowest held-out
     /// CE). The UI should not re-derive this by scanning reports.
     func activeVersusBestMeasured() async -> ActiveVersusBest?
+}
+
+// MARK: - Convenience overloads (no progress handler)
+
+extension StyleMirrorEngine {
+    /// Prepares a blind round without a progress handler.
+    public func prepareBlindRound(incomingEmailID: String) async throws -> BlindTestRound {
+        try await prepareBlindRound(incomingEmailID: incomingEmailID, progress: nil)
+    }
+
+    /// Code-switching demo without a progress handler.
+    public func codeSwitchingDemo() async -> CodeSwitchResult {
+        await codeSwitchingDemo(progress: nil)
+    }
 }
