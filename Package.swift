@@ -14,6 +14,7 @@ let package = Package(
         .library(name: "AdaptTrain", targets: ["AdaptTrain"]),
         .library(name: "AdaptInference", targets: ["AdaptInference"]),
         .library(name: "AdaptEval", targets: ["AdaptEval"]),
+        .library(name: "AdaptSchedule", targets: ["AdaptSchedule"]),
         .executable(name: "adapt-cli", targets: ["adapt-cli"]),
     ],
     dependencies: [
@@ -78,6 +79,18 @@ let package = Package(
                 .product(name: "MLXNN", package: "mlx-swift"),
             ],
             path: "Sources/AdaptInference",
+            exclude: ["README.md"]
+        ),
+        .target(
+            name: "AdaptSchedule",
+            dependencies: [
+                "AdaptCore",
+                "AdaptData",
+                "AdaptRegistry",
+                "AdaptEval",
+                "AdaptTrain",
+            ],
+            path: "Sources/AdaptSchedule",
             exclude: ["README.md"]
         ),
         // Pure CLI logic (JSONL, formatting, shared options) — testable offline.
@@ -177,6 +190,18 @@ let package = Package(
             name: "AdaptCLITests",
             dependencies: ["AdaptCLI", "AdaptCore"],
             path: "Tests/AdaptCLITests"
+        ),
+        .testTarget(
+            name: "AdaptScheduleTests",
+            dependencies: [
+                "AdaptSchedule",
+                "AdaptCore",
+                "AdaptData",
+                "AdaptRegistry",
+                "AdaptEval",
+                "AdaptTrain",
+            ],
+            path: "Tests/AdaptScheduleTests"
         ),
     ]
 )
