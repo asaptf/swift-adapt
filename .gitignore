@@ -10,6 +10,11 @@ Package.resolved
 **/default.metallib
 Tests/AdaptTrainTests/MetalSupport/
 
+# Demo registry from scripts/seed-demo-registry.sh (~200 MB of adapter weights).
+# Derive it; do not vendor (same rule as the Metal library).
+.build/demo-registry/
+.build/demo-slices/
+
 # Xcode
 *.xcodeproj
 *.xcworkspace

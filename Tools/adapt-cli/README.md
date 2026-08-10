@@ -11,6 +11,8 @@ examples, inspect the on-disk registry, and compare base vs adapter generation.
 | `generate` | **Default experience:** base model **and** active/latest adapter side-by-side |
 | `inspect` | List lineages, versions, active pointer, digests, training windows |
 | `promote` | Manually flip the active pointer (eval gate is M3; not auto) |
+| `measure` | Held-out mean cross-entropy (nats/token) for one version — **measurement only**, not a gate |
+| `export-demo-nights` | Split a combined JSONL into `night-N.jsonl` + `held-out.jsonl` |
 
 ```bash
 swift run adapt-cli --help
@@ -63,11 +65,51 @@ Example:
 {"prompt":"Decline a meeting.","completion":"Nix here—bad timing. … —Nix / Belt lane 4","source":"synthetic"}
 ```
 
-Fixture corpus: [`Fixtures/nix-caldera-style.jsonl`](Fixtures/nix-caldera-style.jsonl)
-(~50 synthetic examples in the voice of **Nix Caldera**, a fictional asteroid-belt
-salvage broker). Distinctive register: opens with `Nix here—`, closes with
-`—Nix / Belt lane 4`, short clipped sentences, salvage jargon. No real names or
-addresses.
+Fixture corpora (same fictional persona — **Nix Caldera**, asteroid-belt salvage
+broker; opens with `Nix here—`, closes with `—Nix / Belt lane 4`; no real names
+or addresses):
+
+| File | Size | Use |
+|---|---|---|
+| [`Fixtures/nix-caldera-style.jsonl`](Fixtures/nix-caldera-style.jsonl) | ~50 | Quick train / generate smoke |
+| [`Fixtures/nix-caldera-seven-nights.jsonl`](Fixtures/nix-caldera-seven-nights.jsonl) | 240 | Seven overnight slices (30×7) + 30 held-out |
+
+## Held-out measurement (`measure`)
+
+```bash
+swift run adapt-cli measure \
+  --data path/to/held-out.jsonl \
+  --version 3 \
+  --model mlx-community/Qwen3-4B-4bit \
+  --task style-mirror \
+  --rank 8 \
+  --num-layers 8 \
+  --registry "$REG" \
+  --record
+```
+
+Reports **mean cross-entropy in nats per supervised token** (lower is better),
+using the same completion mask as training. With `--record`, the value is stored
+on the version’s `EvalReport` together with `primaryMetric`,
+`primaryDirection=lowerIsBetter`, and example/token counts.
+
+This is **not** the promotion gate. The gate (pinned held-out set, paired
+Wilcoxon, abstain floor — architecture §4.5) is M3. `measure` only produces the
+number; it never auto-promotes or rejects.
+
+## Seven-night demo registry
+
+```bash
+bash scripts/seed-demo-registry.sh
+# → .build/demo-registry/  (gitignored; ~200 MB — derive, don’t vendor)
+swift run -c release adapt-cli inspect --registry .build/demo-registry
+```
+
+Runs seven separate `train` processes (night N resumes from night N−1’s adapter
+and optimizer state, trains on that night’s new examples only), measures the
+shared held-out slice after each night, and prints a summary table. Defaults:
+`mlx-community/Qwen3-4B-4bit`, attention-only keys, 40 steps/night. Override with
+`DEMO_MODEL`, `STEPS_PER_NIGHT`, `DEMO_REGISTRY`, etc.
 
 ## Registry
 

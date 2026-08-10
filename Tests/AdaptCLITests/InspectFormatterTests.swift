@@ -54,6 +54,29 @@ struct InspectFormatterTests {
         #expect(text.contains("[active]"))
     }
 
+    @Test("formats held-out eval measurement on versions")
+    func formatsEvalMeasurement() {
+        let summary = InspectFormatter.LineageSummary(
+            lineageID: "abc",
+            taskID: "style-mirror",
+            activeVersion: 1,
+            versions: [
+                .init(
+                    version: 1,
+                    status: "active",
+                    digestPrefix: "deadbeefcafe",
+                    exampleCount: 30,
+                    primaryScore: 2.5,
+                    primaryMetric: "mean_cross_entropy_nats",
+                    primaryDirection: "lowerIsBetter"
+                ),
+            ]
+        )
+        let text = InspectFormatter.format(rootPath: "/tmp/r", lineages: [summary])
+        #expect(text.contains("eval=mean_cross_entropy_nats=2.500000"))
+        #expect(text.contains("lowerIsBetter"))
+    }
+
     @Test("surfaces model-defaults when keys were nil")
     func surfacesModelDefaults() {
         let summary = InspectFormatter.LineageSummary(

@@ -17,6 +17,8 @@ public struct AdaptCLIRoot: AsyncParsableCommand {
             GenerateCommand.self,
             InspectCommand.self,
             PromoteCommand.self,
+            MeasureCommand.self,
+            ExportDemoNightsCommand.self,
         ],
         defaultSubcommand: nil
     )

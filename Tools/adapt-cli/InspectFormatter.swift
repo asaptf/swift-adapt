@@ -61,6 +61,12 @@ public enum InspectFormatter {
         public var trainedEnd: Date?
         public var createdAt: Date?
         public var parentVersion: Int?
+        /// Primary eval score when present (e.g. held-out CE nats).
+        public var primaryScore: Double?
+        /// Metric id for `primaryScore` (e.g. `mean_cross_entropy_nats`).
+        public var primaryMetric: String?
+        /// `lowerIsBetter` / `higherIsBetter` when known.
+        public var primaryDirection: String?
 
         public init(
             version: Int,
@@ -70,7 +76,10 @@ public enum InspectFormatter {
             trainedStart: Date? = nil,
             trainedEnd: Date? = nil,
             createdAt: Date? = nil,
-            parentVersion: Int? = nil
+            parentVersion: Int? = nil,
+            primaryScore: Double? = nil,
+            primaryMetric: String? = nil,
+            primaryDirection: String? = nil
         ) {
             self.version = version
             self.status = status
@@ -80,6 +89,9 @@ public enum InspectFormatter {
             self.trainedEnd = trainedEnd
             self.createdAt = createdAt
             self.parentVersion = parentVersion
+            self.primaryScore = primaryScore
+            self.primaryMetric = primaryMetric
+            self.primaryDirection = primaryDirection
         }
     }
 
@@ -134,8 +146,16 @@ public enum InspectFormatter {
                 }
                 let created =
                     v.createdAt.map { " created=\(iso8601.string(from: $0))" } ?? ""
+                let eval: String
+                if let score = v.primaryScore {
+                    let metric = v.primaryMetric ?? "primaryScore"
+                    let direction = v.primaryDirection.map { " (\($0))" } ?? ""
+                    eval = String(format: " eval=%@=%.6f%@", metric, score, direction)
+                } else {
+                    eval = ""
+                }
                 lines.append(
-                    "    v\(v.version)  [\(v.status)]  digest=\(v.digestPrefix)…\(parent)\(window)\(created)"
+                    "    v\(v.version)  [\(v.status)]  digest=\(v.digestPrefix)…\(parent)\(window)\(created)\(eval)"
                 )
             }
         }
@@ -167,7 +187,10 @@ public enum InspectFormatter {
                     trainedStart: meta.trainedOn.start,
                     trainedEnd: meta.trainedOn.end,
                     createdAt: meta.createdAt,
-                    parentVersion: meta.parentVersion
+                    parentVersion: meta.parentVersion,
+                    primaryScore: meta.evalReport?.primaryScore,
+                    primaryMetric: meta.evalReport?.primaryMetric,
+                    primaryDirection: meta.evalReport?.primaryDirection?.rawValue
                 )
             }
         )
