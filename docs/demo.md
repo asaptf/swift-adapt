@@ -4,6 +4,18 @@
 
 The version history comes from `scripts/seed-demo-registry.sh`, which trains seven adapters in seven separate processes, each resuming from the one before. Nothing in the registry is a fixture.
 
+## The screens at a glance
+
+![The desktop demo's screens](images/12-screens.gif)
+
+Offline, the gate refusing night seven, the rollback, and the multilingual screen. Small labels lose legibility at this width — the full-size PNGs are in `docs/images/`.
+
+## On iOS
+
+![QuickReply capturing an example and running the pipeline](images/11-quickreply-ios.gif)
+
+`Examples/QuickReply` on an iPhone 17 Pro simulator. It is a developer skeleton, not a designed app, and its training stage is a no-op by default so the target builds without bundling a multi-gigabyte model. What it does prove is that the machinery runs on iOS: capturing a reply writes to the real SQLite buffer (the count goes to 1), and the nightly pipeline completes all five stages — `prune → sample → train → eval → promote`. The one failure on screen, `BGTaskSchedulerErrorDomain error 3`, is the simulator refusing background-task registration; that path needs a physical device, per `Examples/QuickReply/TESTING.md`.
+
 ## Act 1: airplane mode
 
 The presenter switches on airplane mode in front of the audience before anything else happens. The app treats offline as the feature, not a degraded state, and a "0 B sent" counter stays on screen for the rest of the demo. That counter is a real measurement, not a printed zero: the app routes all outbound traffic through a single chokepoint, and it never calls it. The screen's argument: you don't have to trust a privacy policy when there is no network path to police.
