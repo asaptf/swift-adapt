@@ -35,11 +35,13 @@ public struct ExportDemoNightsCommand: AsyncParsableCommand {
         )
         try DemoCorpus.writePartition(partition, to: outURL)
 
+        let uniqueCompletions = Set(examples.map(\.completion)).count
         print(
             """
             Exported demo corpus slices → \(outURL.path)
               nights=\(partition.nights.count)  per_night=\(partition.nights.first?.count ?? 0)
               held_out=\(partition.heldOut.count)  total_in=\(examples.count)
+              unique_completions=\(uniqueCompletions)  completion_overlap_train_heldout=0
             """
         )
         for (index, night) in partition.nights.enumerated() {

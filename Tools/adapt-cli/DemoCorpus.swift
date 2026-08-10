@@ -6,6 +6,17 @@ import Foundation
 /// Seven nights of continual training each need **new** examples; a single held-out
 /// slice is never trained on and is reused to measure every version. This type is
 /// pure data plumbing — no training, no gate logic.
+///
+/// ## Contamination rule
+///
+/// Training masks loss to the assistant (completion) span. If the same completion
+/// text appears in both a night slice and the held-out set, held-out CE measures
+/// memorisation rather than generalisation. ``partition`` therefore:
+/// 1. Requires every example to carry a **distinct** completion string.
+/// 2. Assigns each unique completion wholly to either a night or held-out
+///    (layout: nights first, held-out tail, in input order).
+/// 3. Fails loudly with counts when the corpus cannot satisfy the requested
+///    night count and held-out size without completion overlap.
 public enum DemoCorpus {
     /// Default night count for the StyleMirror “seven nights” demo.
     public static let defaultNightCount = 7
@@ -30,6 +41,16 @@ public enum DemoCorpus {
         public var totalCount: Int {
             nights.reduce(0) { $0 + $1.count } + heldOut.count
         }
+
+        /// Completions used for training (union of all nights).
+        public var trainCompletions: Set<String> {
+            Set(nights.flatMap { $0.map(\.completion) })
+        }
+
+        /// Completions reserved for held-out measurement.
+        public var heldOutCompletions: Set<String> {
+            Set(heldOut.map(\.completion))
+        }
     }
 
     /// Partitions `examples` into `nightCount` equal night slices and a held-out tail.
@@ -42,7 +63,13 @@ public enum DemoCorpus {
     /// Any remainder after equal night division is absorbed into the held-out tail
     /// so nights stay equal-sized (stable resume batch cursors across nights).
     ///
-    /// - Throws: ``AdaptCLIError/invalidArgument`` when sizes cannot form the partition.
+    /// **Structural non-contamination:** every completion string must be unique in
+    /// the corpus. Partitioning unique completions (one example each) guarantees
+    /// held-out completions never appear in any night. Duplicate completions fail
+    /// with counts rather than emitting a contaminated split.
+    ///
+    /// - Throws: ``AdaptCLIError/invalidArgument`` when sizes cannot form the
+    ///   partition or when completion texts are not unique.
     public static func partition(
         _ examples: [TrainingExample],
         nightCount: Int = defaultNightCount,
@@ -54,17 +81,42 @@ public enum DemoCorpus {
         guard heldOutCount > 0 else {
             throw AdaptCLIError.invalidArgument("heldOutCount must be > 0")
         }
-        guard examples.count >= heldOutCount + nightCount else {
+
+        let total = examples.count
+        let uniqueCompletions = Set(examples.map(\.completion))
+        let uniqueCount = uniqueCompletions.count
+
+        // Fail loudly on duplicate completions — re-pairing the same reply under
+        // new prompts pads volume without new training signal and leaks across splits.
+        if uniqueCount != total {
             throw AdaptCLIError.invalidArgument(
-                "need at least heldOutCount (\(heldOutCount)) + nightCount (\(nightCount)) examples; got \(examples.count)"
+                """
+                demo corpus completions must be unique: \
+                lines=\(total) unique_completions=\(uniqueCount) \
+                duplicates=\(total - uniqueCount). \
+                Expand the fixture so every line has a distinct completion text.
+                """
             )
         }
 
-        let trainBudget = examples.count - heldOutCount
+        let minimum = heldOutCount + nightCount
+        guard total >= minimum else {
+            throw AdaptCLIError.invalidArgument(
+                """
+                need at least heldOutCount (\(heldOutCount)) + nightCount (\(nightCount)) \
+                unique completions; got lines=\(total) unique_completions=\(uniqueCount)
+                """
+            )
+        }
+
+        let trainBudget = total - heldOutCount
         let perNight = trainBudget / nightCount
         guard perNight > 0 else {
             throw AdaptCLIError.invalidArgument(
-                "heldOutCount \(heldOutCount) leaves no examples for \(nightCount) nights"
+                """
+                heldOutCount \(heldOutCount) leaves no examples for \(nightCount) nights \
+                (lines=\(total) unique_completions=\(uniqueCount))
+                """
             )
         }
 
@@ -79,7 +131,24 @@ public enum DemoCorpus {
             nights.append(Array(examples[start..<end]))
         }
         let heldOut = Array(examples[heldOutStart...])
-        return Partition(nights: nights, heldOut: heldOut)
+
+        let partition = Partition(nights: nights, heldOut: heldOut)
+
+        // Structural guarantee (redundant when completions are unique, but the
+        // numbers in the error message are what operators need when it fails).
+        let overlap = partition.trainCompletions.intersection(partition.heldOutCompletions)
+        if !overlap.isEmpty {
+            throw AdaptCLIError.invalidArgument(
+                """
+                held-out contaminated by training completions: \
+                overlap=\(overlap.count) held_out=\(heldOut.count) \
+                train=\(trainUsed) unique_completions=\(uniqueCount). \
+                Partition on unique completions failed; fix the corpus.
+                """
+            )
+        }
+
+        return partition
     }
 
     /// Writes night + held-out JSONL files under `directory`.

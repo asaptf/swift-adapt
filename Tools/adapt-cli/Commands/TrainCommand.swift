@@ -168,14 +168,25 @@ public struct TrainCommand: AsyncParsableCommand {
             )
         }
 
-        print(
-            """
+        let meanTrainLoss: Float? = {
+            guard !outcome.lossHistory.isEmpty else { return nil }
+            let sum = outcome.lossHistory.reduce(Float(0), +)
+            return sum / Float(outcome.lossHistory.count)
+        }()
+        let finalTrainLoss = outcome.lossHistory.last
+        var doneLines = """
             Done.
               stop=\(outcome.stopReason.rawValue)
               stepsThisRun=\(outcome.stepsCompleted)  lifetime=\(outcome.lifetimeSteps)
               tokens=\(outcome.tokensProcessed)  tok/s=\(String(format: "%.1f", outcome.tokensPerSecond))
             """
-        )
+        if let meanTrainLoss {
+            doneLines += "\n  mean_train_loss=\(String(format: "%.4f", meanTrainLoss))"
+        }
+        if let finalTrainLoss {
+            doneLines += "  final_step_loss=\(String(format: "%.4f", finalTrainLoss))"
+        }
+        print(doneLines)
         if let candidate = outcome.candidateVersion {
             print(
                 "  candidate=v\(candidate.version)  digest=\(candidate.weightsDigest.prefix(12))…"

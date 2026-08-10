@@ -89,6 +89,7 @@ COMMON_MEASURE=(
 
 # shellcheck disable=SC2034
 declare -a NIGHT_SCORES=()
+declare -a NIGHT_TRAIN_LOSSES=()
 declare -a NIGHT_VERSIONS=()
 
 for night in $(seq 1 "$NIGHTS"); do
@@ -101,9 +102,24 @@ for night in $(seq 1 "$NIGHTS"); do
   fi
 
   echo "Training on $(basename "$night_data") (resume if prior night exists)…"
-  "${CLI[@]}" train \
+  train_out="$("${CLI[@]}" train \
     --data "$night_data" \
-    "${COMMON_TRAIN[@]}"
+    "${COMMON_TRAIN[@]}" 2>&1)" || {
+    echo "$train_out" >&2
+    echo "error: train failed for night ${night}" >&2
+    exit 1
+  }
+  echo "$train_out"
+
+  train_loss="$(printf '%s\n' "$train_out" | sed -n 's/.*mean_train_loss=\([0-9.]*\).*/\1/p' | head -1)"
+  if [[ -z "$train_loss" ]]; then
+    # Fallback: last per-step loss= line if mean_train_loss is missing.
+    train_loss="$(printf '%s\n' "$train_out" | sed -n 's/.* loss=\([0-9.]*\).*/\1/p' | tail -1)"
+  fi
+  if [[ -z "$train_loss" ]]; then
+    echo "error: could not parse mean_train_loss from train output" >&2
+    exit 1
+  fi
 
   # Latest version number = night index when one version is written per night.
   version="$night"
@@ -121,24 +137,27 @@ for night in $(seq 1 "$NIGHTS"); do
     exit 1
   fi
   NIGHT_SCORES+=("$score")
+  NIGHT_TRAIN_LOSSES+=("$train_loss")
   NIGHT_VERSIONS+=("$version")
 done
 
 echo
-echo "======== Seven-night summary (held-out mean CE, nats/token; lower is better) ========"
-printf '%-8s  %-10s  %s\n' "night" "version" "held_out_ce_nats"
+echo "======== Seven-night summary (nats/token; lower is better) ========"
+printf '%-8s  %-10s  %-16s  %-16s  %s\n' "night" "version" "train_mean_loss" "held_out_ce_nats" "gap(held-train)"
 prev=""
 for i in $(seq 0 $((NIGHTS - 1))); do
   night=$((i + 1))
   ver="${NIGHT_VERSIONS[$i]}"
+  train="${NIGHT_TRAIN_LOSSES[$i]}"
   score="${NIGHT_SCORES[$i]}"
+  gap="$(awk -v h="$score" -v t="$train" 'BEGIN { printf "%+.4f", h - t }')"
   delta=""
   if [[ -n "$prev" ]]; then
     # awk for floating delta (bash cannot)
     d="$(awk -v a="$score" -v b="$prev" 'BEGIN { printf "%+.4f", a - b }')"
-    delta="  (Δ $d vs previous night)"
+    delta="  (held Δ $d vs previous night)"
   fi
-  printf '%-8s  v%-9s  %s%s\n' "$night" "$ver" "$score" "$delta"
+  printf '%-8s  v%-9s  %-16s  %-16s  %s%s\n' "$night" "$ver" "$train" "$score" "$gap" "$delta"
   prev="$score"
 done
 
@@ -149,3 +168,4 @@ echo "  swift run -c release adapt-cli inspect --registry \"$REG\""
 echo
 echo "Note: these numbers are measurements, not a promotion gate. Do not retune"
 echo "the recipe to force a rising curve — report the shape as measured."
+echo "gap(held-train) is the train/held-out gap (memorisation signal when large)."

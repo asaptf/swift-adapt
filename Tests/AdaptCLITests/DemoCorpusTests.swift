@@ -30,11 +30,14 @@ struct DemoCorpusTests {
         #expect(part.nights[6].map(\.prompt) == (180..<210).map { "prompt-\($0)" })
         #expect(part.heldOut.map(\.prompt) == (210..<240).map { "prompt-\($0)" })
 
-        // No train example appears in held-out.
+        // No train example appears in held-out (pair-level and completion-level).
         let trainPrompts = Set(part.nights.flatMap { $0.map(\.prompt) })
         let heldPrompts = Set(part.heldOut.map(\.prompt))
         #expect(trainPrompts.isDisjoint(with: heldPrompts))
         #expect(trainPrompts.count == 210)
+        #expect(part.trainCompletions.isDisjoint(with: part.heldOutCompletions))
+        #expect(part.trainCompletions.count == 210)
+        #expect(part.heldOutCompletions.count == 30)
     }
 
     @Test("remainder after equal nights is absorbed into held-out")
@@ -46,6 +49,7 @@ struct DemoCorpusTests {
         #expect(part.nights.allSatisfy { $0.count == 11 })
         #expect(part.heldOut.count == 100 - 7 * 11)
         #expect(part.totalCount == 100)
+        #expect(part.trainCompletions.isDisjoint(with: part.heldOutCompletions))
     }
 
     @Test("rejects too-small corpora")
@@ -54,6 +58,41 @@ struct DemoCorpusTests {
         #expect(throws: AdaptCLIError.self) {
             _ = try DemoCorpus.partition(all, nightCount: 7, heldOutCount: 30)
         }
+    }
+
+    @Test("rejects duplicate completions with counts")
+    func rejectsDuplicateCompletions() {
+        var all = examples(40)
+        // Re-pair an existing completion under a new prompt — classic contamination pad.
+        all.append(
+            TrainingExample(
+                prompt: "prompt-dup",
+                completion: "completion-0",
+                source: .synthetic
+            )
+        )
+        #expect(throws: AdaptCLIError.self) {
+            _ = try DemoCorpus.partition(all, nightCount: 7, heldOutCount: 10)
+        }
+        do {
+            _ = try DemoCorpus.partition(all, nightCount: 7, heldOutCount: 10)
+            Issue.record("expected partition to throw on duplicate completions")
+        } catch let error as AdaptCLIError {
+            let message = error.errorDescription ?? ""
+            #expect(message.contains("unique_completions="))
+            #expect(message.contains("duplicates="))
+        } catch {
+            Issue.record("unexpected error type: \(error)")
+        }
+    }
+
+    @Test("held-out and train completion texts never overlap")
+    func zeroCompletionOverlap() throws {
+        let all = examples(240)
+        let part = try DemoCorpus.partition(all, nightCount: 7, heldOutCount: 30)
+        let overlap = part.trainCompletions.intersection(part.heldOutCompletions)
+        #expect(overlap.isEmpty)
+        #expect(overlap.count == 0)
     }
 
     @Test("writePartition emits night and held-out files")
@@ -74,5 +113,27 @@ struct DemoCorpusTests {
         let held = try JSONLLoader.load(from: dir.appendingPathComponent("held-out.jsonl"))
         #expect(held.count == part.heldOut.count)
         #expect(held.map(\.prompt) == part.heldOut.map(\.prompt))
+    }
+
+    @Test("seven-night fixture has unique completions equal to line count")
+    func sevenNightFixtureUniqueCompletions() throws {
+        let url = URL(fileURLWithPath: #filePath)
+            .deletingLastPathComponent() // DemoCorpusTests.swift
+            .deletingLastPathComponent() // AdaptCLITests
+            .deletingLastPathComponent() // Tests
+            .appendingPathComponent("Tools/adapt-cli/Fixtures/nix-caldera-seven-nights.jsonl")
+        let examples = try JSONLLoader.load(from: url)
+        #expect(examples.count == 240)
+
+        let completions = examples.map(\.completion)
+        let unique = Set(completions)
+        #expect(unique.count == examples.count)
+
+        let part = try DemoCorpus.partition(examples, nightCount: 7, heldOutCount: 30)
+        #expect(part.nights.count == 7)
+        #expect(part.nights.allSatisfy { $0.count == 30 })
+        #expect(part.heldOut.count == 30)
+        let overlap = part.trainCompletions.intersection(part.heldOutCompletions)
+        #expect(overlap.isEmpty, "held-out contaminated: \(overlap.count) shared completions")
     }
 }
