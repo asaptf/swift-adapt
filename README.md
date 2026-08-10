@@ -22,8 +22,9 @@ Milestone 1 of six is done and externally reviewed. Built and working today:
 
 Measured on an M5 Pro:
 
-- 110 tests, all offline — no network, no model downloads in the test suite.
-- Training Qwen3-4B-4bit, rank 8, 16 adapted layers, 300 steps: 2 min 10 s, 3.1 GB peak memory, 73 tokens/sec.
+- 119 tests, all offline — no network, no model downloads in the test suite.
+- Training Qwen3-4B-4bit, rank 8, 16 adapted layers, 100 steps: 15 s, 2.4 GB peak memory, a 10 MB adapter of 2.6M parameters.
+- The default adapts attention projections only. Adapting the MLP projections as well costs 7.3M parameters and 28 MB for no visible gain in style, and reaches a lower training loss largely by memorising more.
 - Adapter hot-swap: 8 ms for a rank-8 adapter.
 
 Not built yet:
@@ -51,7 +52,7 @@ Two things are still open. Training 300 steps on 50 examples collapses the loss 
 ```bash
 git clone <repo> && cd swift-adapt
 swift build
-swift test          # 110 tests, offline
+swift test          # 119 tests, offline
 
 # Train an adapter on 50 example replies in a distinctive voice
 swift run -c release adapt-cli train \
