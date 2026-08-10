@@ -10,8 +10,13 @@
 # The registry is derived, not vendored (~200 MB of weights). Path is gitignored.
 #
 # Usage:
-#   bash scripts/seed-demo-registry.sh
-#   DEMO_REGISTRY=/tmp/my-reg STEPS_PER_NIGHT=40 bash scripts/seed-demo-registry.sh
+#   bash scripts/seed-demo-registry.sh Tools/adapt-cli/Fixtures/renna-vale-seven-nights.jsonl
+#   bash scripts/seed-demo-registry.sh Tools/adapt-cli/Fixtures/nix-caldera-seven-nights.jsonl
+#   DEMO_CORPUS=... bash scripts/seed-demo-registry.sh
+#   DEMO_REGISTRY=/tmp/my-reg STEPS_PER_NIGHT=40 bash scripts/seed-demo-registry.sh <corpus>
+#
+# The StyleMirror demo is Renna Vale end-to-end; pass the Renna fixture for the
+# stage registry. The Nix Caldera fixture remains for the CLI quickstart only.
 #
 set -euo pipefail
 
@@ -20,7 +25,21 @@ cd "$ROOT"
 
 REG="${DEMO_REGISTRY:-$ROOT/.build/demo-registry}"
 SLICES="${DEMO_SLICES:-$ROOT/.build/demo-slices}"
-CORPUS="$ROOT/Tools/adapt-cli/Fixtures/nix-caldera-seven-nights.jsonl"
+DEFAULT_CORPUS="$ROOT/Tools/adapt-cli/Fixtures/renna-vale-seven-nights.jsonl"
+# Positional corpus wins; else DEMO_CORPUS; else Renna (demo persona).
+if [[ $# -ge 1 && -n "${1:-}" ]]; then
+  CORPUS_ARG="$1"
+  if [[ "$CORPUS_ARG" = /* ]]; then
+    CORPUS="$CORPUS_ARG"
+  else
+    CORPUS="$ROOT/$CORPUS_ARG"
+  fi
+else
+  CORPUS="${DEMO_CORPUS:-$DEFAULT_CORPUS}"
+  if [[ "$CORPUS" != /* ]]; then
+    CORPUS="$ROOT/$CORPUS"
+  fi
+fi
 MODEL="${DEMO_MODEL:-mlx-community/Qwen3-4B-4bit}"
 TASK="${DEMO_TASK:-style-mirror}"
 # Modest per-night steps. 300 total on 50 examples collapsed loss; keep nights short.
@@ -36,11 +55,13 @@ CHECKPOINT_EVERY="$STEPS"
 
 if [[ ! -f "$CORPUS" ]]; then
   echo "error: missing corpus $CORPUS" >&2
+  echo "usage: bash scripts/seed-demo-registry.sh <path-to-seven-nights.jsonl>" >&2
   exit 1
 fi
 
 echo "=== seed-demo-registry ==="
 echo "  registry:  $REG"
+echo "  corpus:    $CORPUS"
 echo "  model:     $MODEL"
 echo "  steps/night: $STEPS  rank=$RANK  layers=$NUM_LAYERS  lr=$LR"
 echo "  nights:    $NIGHTS  held-out: $HELD_OUT"

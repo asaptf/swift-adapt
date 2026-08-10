@@ -14,15 +14,30 @@ import Foundation
 ///
 /// **Base-model foil:** stiff politeness, hedge words, generic corporate register —
 /// distinguished by *writing*, not by length or a signature block.
+///
+/// **Seven-night registry:** the stage adapter is trained from
+/// `Tools/adapt-cli/Fixtures/renna-vale-seven-nights.jsonl` (same persona and
+/// multilingual mix). Blind-test ``BlindRoundFixture/human`` bodies are drawn
+/// from that fixture's **held-out** tail so the human card is mail the adapter
+/// has never been trained on. Paste-preload ``sentEmails`` stay in the same
+/// voice for Act 2 live training against the Renna lineage.
 public enum SampleCorpus: Sendable {
     /// Display name of the fictional user.
     public static let userDisplayName = "Renna Vale"
     /// Fictional user address (`.example` TLD — not routable).
     public static let userAddress = "renna@harborfinch.example"
 
+    /// Repo-relative path of the seven-night Renna fixture (CLI seed + tests).
+    public static let sevenNightFixtureRelativePath =
+        "Tools/adapt-cli/Fixtures/renna-vale-seven-nights.jsonl"
+
     // MARK: - Sent mail (~30)
 
     /// Approximately thirty synthetic sent emails used as the training paste corpus.
+    ///
+    /// Multilingual on purpose (`en` / `es` / `ru`) so Act 4's claim — "your mail
+    /// was already multilingual, so the adapter is too" — matches both the paste
+    /// path and the seven-night registry training data.
     public static let sentEmails: [EmailMessage] = {
         var items: [EmailMessage] = []
         items.append(contentsOf: englishSent)
@@ -54,6 +69,13 @@ public enum SampleCorpus: Sendable {
     ///
     /// Fairness (`DESIGN.md` §4.3): candidates share a 40–80 word length class,
     /// stay within ~15% of each other, and carry no signature blocks.
+    ///
+    /// **Held-out invariant:** each ``BlindRoundFixture/human`` body is the
+    /// signature-stripped form of a completion in the Renna seven-night fixture's
+    /// held-out slice (tail of
+    /// `Tools/adapt-cli/Fixtures/renna-vale-seven-nights.jsonl`). The adapter is
+    /// never trained on those completions — see `CorpusTests` /
+    /// `DemoCorpusTests`.
     public static let blindRounds: [BlindRoundFixture] = [
         BlindRoundFixture(
             incoming: EmailMessage(

@@ -117,11 +117,7 @@ struct DemoCorpusTests {
 
     @Test("seven-night fixture has unique completions equal to line count")
     func sevenNightFixtureUniqueCompletions() throws {
-        let url = URL(fileURLWithPath: #filePath)
-            .deletingLastPathComponent() // DemoCorpusTests.swift
-            .deletingLastPathComponent() // AdaptCLITests
-            .deletingLastPathComponent() // Tests
-            .appendingPathComponent("Tools/adapt-cli/Fixtures/nix-caldera-seven-nights.jsonl")
+        let url = fixtureURL("nix-caldera-seven-nights.jsonl")
         let examples = try JSONLLoader.load(from: url)
         #expect(examples.count == 240)
 
@@ -135,5 +131,77 @@ struct DemoCorpusTests {
         #expect(part.heldOut.count == 30)
         let overlap = part.trainCompletions.intersection(part.heldOutCompletions)
         #expect(overlap.isEmpty, "held-out contaminated: \(overlap.count) shared completions")
+    }
+
+    @Test("Renna Vale seven-night fixture: unique completions, zero train/held-out overlap")
+    func rennaSevenNightFixtureUniqueAndDisjoint() throws {
+        let url = fixtureURL("renna-vale-seven-nights.jsonl")
+        let examples = try JSONLLoader.load(from: url)
+        #expect(examples.count == 240)
+
+        let completions = examples.map(\.completion)
+        #expect(Set(completions).count == examples.count)
+
+        let part = try DemoCorpus.partition(examples, nightCount: 7, heldOutCount: 30)
+        #expect(part.nights.count == 7)
+        #expect(part.nights.allSatisfy { $0.count == 30 })
+        #expect(part.heldOut.count == 30)
+        let overlap = part.trainCompletions.intersection(part.heldOutCompletions)
+        #expect(overlap.isEmpty, "held-out contaminated: \(overlap.count) shared completions")
+    }
+
+    @Test("Renna Vale seven-night fixture is multilingual (en/es/ru non-trivial)")
+    func rennaSevenNightLanguageMix() throws {
+        let url = fixtureURL("renna-vale-seven-nights.jsonl")
+        let examples = try JSONLLoader.load(from: url)
+        let part = try DemoCorpus.partition(examples, nightCount: 7, heldOutCount: 30)
+
+        func language(of example: TrainingExample) -> String {
+            let prompt = example.prompt.lowercased()
+            if prompt.contains("in spanish") { return "es" }
+            if prompt.contains("in russian") { return "ru" }
+            if prompt.contains("in english") { return "en" }
+            // Fallback on completion script when prompt omits the tag.
+            let completion = example.completion
+            if completion.unicodeScalars.contains(where: {
+                (0x0400...0x04FF).contains($0.value)
+            }) {
+                return "ru"
+            }
+            return "en"
+        }
+
+        let trainLangs = part.nights.flatMap { $0.map(language(of:)) }
+        let heldLangs = part.heldOut.map(language(of:))
+        let allLangs = trainLangs + heldLangs
+
+        func count(_ langs: [String], _ code: String) -> Int {
+            langs.filter { $0 == code }.count
+        }
+
+        let total = allLangs.count
+        #expect(total == 240)
+        let en = count(allLangs, "en")
+        let es = count(allLangs, "es")
+        let ru = count(allLangs, "ru")
+        // Non-trivial multilingual: each language ≥ 15% of the corpus.
+        #expect(en >= 36, "english too scarce: \(en)/\(total)")
+        #expect(es >= 36, "spanish too scarce: \(es)/\(total)")
+        #expect(ru >= 36, "russian too scarce: \(ru)/\(total)")
+        #expect(es + ru >= total / 3, "non-english share too small: es=\(es) ru=\(ru)")
+
+        // Held-out and train both carry every language (code-switching claim).
+        for code in ["en", "es", "ru"] {
+            #expect(trainLangs.contains(code), "train missing \(code)")
+            #expect(heldLangs.contains(code), "held-out missing \(code)")
+        }
+    }
+
+    private func fixtureURL(_ name: String) -> URL {
+        URL(fileURLWithPath: #filePath)
+            .deletingLastPathComponent() // DemoCorpusTests.swift
+            .deletingLastPathComponent() // AdaptCLITests
+            .deletingLastPathComponent() // Tests
+            .appendingPathComponent("Tools/adapt-cli/Fixtures/\(name)")
     }
 }

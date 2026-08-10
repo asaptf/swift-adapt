@@ -148,7 +148,101 @@ struct CorpusTests {
         #expect(SampleCorpus.poisonedCompletions.allSatisfy { $0 == $0.uppercased() })
     }
 
+    @Test("blind human candidates come from the Renna seven-night held-out slice")
+    func blindHumanCandidatesFromHeldOut() throws {
+        let url = rennaSevenNightFixtureURL()
+        #expect(
+            FileManager.default.fileExists(atPath: url.path),
+            "missing fixture at \(url.path)"
+        )
+        let examples = try DemoJSONL.load(from: url)
+        #expect(examples.count == 240)
+
+        // Same layout as DemoCorpus.partition: nights first, held-out tail.
+        let heldOut = Array(examples.suffix(30))
+        let heldBodies = Set(heldOut.map { stripRennaSignOff($0.completion) })
+
+        // No human body may appear in any training night (signature-stripped).
+        let trainBodies = Set(examples.prefix(210).map { stripRennaSignOff($0.completion) })
+        #expect(trainBodies.isDisjoint(with: heldBodies))
+
+        for fixture in SampleCorpus.blindRounds {
+            let human = normalizeWhitespace(fixture.human)
+            #expect(
+                heldBodies.contains(human),
+                "human for \(fixture.incoming.id) is not in held-out (adapter may have trained on it)"
+            )
+            #expect(
+                !trainBodies.contains(human),
+                "human for \(fixture.incoming.id) also appears in a training night"
+            )
+        }
+    }
+
+    @Test("Renna seven-night fixture language mix is non-trivial en/es/ru")
+    func rennaFixtureLanguageMix() throws {
+        let examples = try DemoJSONL.load(from: rennaSevenNightFixtureURL())
+        var counts: [String: Int] = ["en": 0, "es": 0, "ru": 0]
+        for example in examples {
+            let lang = languageTag(in: example.prompt)
+            counts[lang, default: 0] += 1
+        }
+        let total = examples.count
+        #expect((counts["en"] ?? 0) >= total / 5)
+        #expect((counts["es"] ?? 0) >= total / 10)
+        #expect((counts["ru"] ?? 0) >= total / 10)
+        #expect((counts["es"] ?? 0) + (counts["ru"] ?? 0) >= total / 3)
+    }
+
     // MARK: - Helpers
+
+    private func rennaSevenNightFixtureURL() -> URL {
+        URL(fileURLWithPath: #filePath)
+            .deletingLastPathComponent() // CorpusTests.swift
+            .deletingLastPathComponent() // StyleMirrorEngineTests
+            .deletingLastPathComponent() // Tests
+            .deletingLastPathComponent() // StyleMirror
+            .deletingLastPathComponent() // Examples
+            .appendingPathComponent(SampleCorpus.sevenNightFixtureRelativePath)
+    }
+
+    private func languageTag(in prompt: String) -> String {
+        let lower = prompt.lowercased()
+        if lower.contains("in spanish") { return "es" }
+        if lower.contains("in russian") { return "ru" }
+        return "en"
+    }
+
+    /// Strips Renna sign-offs used in the seven-night fixture completions.
+    private func stripRennaSignOff(_ text: String) -> String {
+        var s = text.trimmingCharacters(in: .whitespacesAndNewlines)
+        let suffixes = [
+            "— renna (harborfinch)",
+            "— renna, harborfinch",
+            "— renna",
+        ]
+        for suffix in suffixes {
+            if s.lowercased().hasSuffix(suffix) {
+                s = String(s.dropLast(suffix.count))
+                    .trimmingCharacters(in: .whitespacesAndNewlines)
+                break
+            }
+        }
+        let lines = s
+            .split(whereSeparator: \.isNewline)
+            .map { $0.trimmingCharacters(in: .whitespaces) }
+            .filter { !$0.isEmpty }
+        if let last = lines.last?.lowercased(), last == "r" {
+            s = lines.dropLast().joined(separator: "\n")
+        }
+        return normalizeWhitespace(s)
+    }
+
+    private func normalizeWhitespace(_ text: String) -> String {
+        text
+            .split { $0.isWhitespace || $0.isNewline }
+            .joined(separator: " ")
+    }
 
     private func wordCount(_ text: String) -> Int {
         text.split { $0.isWhitespace || $0.isNewline }.count

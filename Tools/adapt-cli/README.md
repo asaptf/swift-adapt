@@ -65,14 +65,14 @@ Example:
 {"prompt":"Decline a meeting.","completion":"Nix here—bad timing. … —Nix / Belt lane 4","source":"synthetic"}
 ```
 
-Fixture corpora (same fictional persona — **Nix Caldera**, asteroid-belt salvage
-broker; opens with `Nix here—`, closes with `—Nix / Belt lane 4`; no real names
-or addresses):
+Fixture corpora (two personas, two purposes — both synthetic; no real names or
+addresses):
 
-| File | Size | Use |
-|---|---|---|
-| [`Fixtures/nix-caldera-style.jsonl`](Fixtures/nix-caldera-style.jsonl) | ~50 | Quick train / generate smoke |
-| [`Fixtures/nix-caldera-seven-nights.jsonl`](Fixtures/nix-caldera-seven-nights.jsonl) | 240 | Seven overnight slices (30×7) + 30 held-out |
+| File | Persona | Size | Use |
+|---|---|---|---|
+| [`Fixtures/nix-caldera-style.jsonl`](Fixtures/nix-caldera-style.jsonl) | **Nix Caldera** (asteroid-belt salvage broker; `Nix here—` … `—Nix / Belt lane 4`) | ~50 | CLI quick train / generate smoke |
+| [`Fixtures/nix-caldera-seven-nights.jsonl`](Fixtures/nix-caldera-seven-nights.jsonl) | Nix Caldera | 240 | CLI seven-night partition smoke (not the StyleMirror stage registry) |
+| [`Fixtures/renna-vale-seven-nights.jsonl`](Fixtures/renna-vale-seven-nights.jsonl) | **Renna Vale** (Harborfinch product lead; short, direct, `— renna`; en/es/ru) | 240 | StyleMirror demo registry — must match `SampleCorpus` persona and blind-test held-out humans |
 
 ## Held-out measurement (`measure`)
 
@@ -100,14 +100,19 @@ number; it never auto-promotes or rejects.
 ## Seven-night demo registry
 
 ```bash
-bash scripts/seed-demo-registry.sh
+# StyleMirror stage persona (Renna Vale, multilingual):
+bash scripts/seed-demo-registry.sh Tools/adapt-cli/Fixtures/renna-vale-seven-nights.jsonl
+# CLI quickstart persona (Nix Caldera) still works the same way:
+bash scripts/seed-demo-registry.sh Tools/adapt-cli/Fixtures/nix-caldera-seven-nights.jsonl
 # → .build/demo-registry/  (gitignored; ~200 MB — derive, don’t vendor)
 swift run -c release adapt-cli inspect --registry .build/demo-registry
 ```
 
-Runs seven separate `train` processes (night N resumes from night N−1’s adapter
-and optimizer state, trains on that night’s new examples only), measures the
-shared held-out slice after each night, and prints a summary table. Defaults:
+Pass the corpus as the first argument (or `DEMO_CORPUS`); when omitted the script
+defaults to the Renna Vale fixture used by StyleMirror. Runs seven separate
+`train` processes (night N resumes from night N−1’s adapter and optimizer state,
+trains on that night’s new examples only), measures the shared held-out slice
+after each night, and prints a summary table. Defaults:
 `mlx-community/Qwen3-4B-4bit`, attention-only keys, 40 steps/night. Override with
 `DEMO_MODEL`, `STEPS_PER_NIGHT`, `DEMO_REGISTRY`, etc.
 
