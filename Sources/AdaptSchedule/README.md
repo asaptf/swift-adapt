@@ -57,7 +57,7 @@ See `PlatformTrainBudget.justificationSummary`.
 | `AdaptCore` / `AdaptData` / `AdaptRegistry` / `AdaptEval` | Pure Swift (+ sqlite); Data Protection file class is `#if os(iOS)` and only meaningful on device |
 | `AdaptSchedule` policy + pipeline sources | Written with iOS paths (`UIDevice` battery, `BGProcessingTask`) |
 | `AdaptTrain` / `AdaptInference` / `AdaptSchedule` (via Train) | Depend on **mlx-swift** / **mlx-swift-lm** |
-| iOS `xcodebuild` in this M4 environment | **Failed at package validation**, not at Adapt source: `Validate plug-in "CudaBuild" in package "mlx-swift"`. That is an upstream SPM plugin gate when targeting `generic/platform=iOS` here — **not** a green device compile, and not something we paper over with a stub. |
+- **iOS device build: verified.** `xcodebuild -scheme AdaptTrain -destination 'generic/platform=iOS' -skipPackagePluginValidation build` → **BUILD SUCCEEDED**. The earlier `Validate plug-in "CudaBuild" in package "mlx-swift"` failure was missing that flag, not an upstream blocker: mlx-swift ships a build plugin that Xcode asks to validate, and the flag answers it. Compilation and linking for the device are therefore proven; the device *runtime* is not (Metal library layout in a real bundle, per-step cost, the `BGProcessingTask` window, behaviour under memory pressure) — those stay in `Examples/QuickReply/TESTING.md` as a manual protocol.
 | Test-time metallib (`scripts/ensure-mlx-metal-library.sh`) | **macOS developer convenience** for offline unit tests; says nothing about an App Store / device metallib layout |
 | MLX training on a physical phone | **Pending** — QuickReply `TESTING.md` protocol |
 | iOS Simulator training | **Not** a meaningful stand-in for device Metal |

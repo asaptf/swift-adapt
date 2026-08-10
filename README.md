@@ -92,7 +92,7 @@ Training data is JSONL, one object per line. `prompt` and `completion` are requi
 
 ## Requirements
 
-macOS 15+ or iOS 18+ (iOS support lands with M4), Apple Silicon, Swift 6.3.
+macOS 15+ or iOS 18+, Apple Silicon, Swift 6.3. The iOS device build is verified to compile and link (`xcodebuild -destination 'generic/platform=iOS' -skipPackagePluginValidation`); on-device training itself is not yet verified — see `Examples/QuickReply/TESTING.md`.
 
 Dependencies: mlx-swift, mlx-swift-lm, swift-argument-parser. The library modules pull in no networking; the CLI adds Hugging Face packages for model download. That separation is deliberate — privacy is structural, not a setting. An app that links only the library has nothing that could send data anywhere.
 
