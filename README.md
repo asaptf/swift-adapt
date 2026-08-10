@@ -22,7 +22,7 @@ Milestone 1 of six is done and externally reviewed. Built and working today:
 
 Measured on an M5 Pro:
 
-- 87 tests, all offline — no network, no model downloads in the test suite.
+- 110 tests, all offline — no network, no model downloads in the test suite.
 - Training Qwen3-4B-4bit, rank 8, 16 adapted layers, 300 steps: 2 min 10 s, 3.1 GB peak memory, 73 tokens/sec.
 - Adapter hot-swap: 8 ms for a rank-8 adapter.
 
@@ -42,16 +42,16 @@ A controlled experiment with pre-registered pass criteria failed on all three te
 
 The cause was that training and generation both bypassed the model's chat template, so the model was continuing a document rather than answering a question. Both paths now go through one shared formatter, the convention used is recorded in the adapter's metadata, and a session refuses an adapter trained under a different convention rather than generating subtly wrong output. Measured after the change on Qwen3-4B-4bit at 100 steps: loss 9.63 → 1.49, and the base model produces a chat-conditioned reply instead of placeholder templates.
 
-One thing is still open. Training 300 steps on 50 examples collapses the loss to 0.001 and bleeds training vocabulary into unrelated answers; early stopping belongs to the evaluation gate in M2/M3, so for now keep the step count low.
+Qwen3's default chat template enables a reasoning trace, which is fine for a library and wrong for a side-by-side comparison. `GenerationOptions.chatTemplateEnableThinking` turns it off (CLI: `--chat-template-enable-thinking false`) by passing the `enable_thinking` variable through mlx-swift-lm's template context; the default follows the model's template so nothing changes silently.
 
-Qwen3's default chat template enables a reasoning trace. Callers can turn it off via `GenerationOptions.chatTemplateEnableThinking` (CLI: `--chat-template-enable-thinking false`), which injects the Jinja variable `enable_thinking` through mlx-swift-lm's existing `additionalContext` path. Default remains template-default so library behaviour does not change silently.
+Two things are still open. Training 300 steps on 50 examples collapses the loss to 0.001 and bleeds training vocabulary into unrelated answers, so keep the step count low until the evaluation gate can stop training on held-out loss. And a base model asked for an email reply writes about 500 characters where the adapter writes 60 — accurate, but it means a side-by-side comparison has to constrain both sides to the same length, or length alone gives the answer away.
 
 ## Quickstart
 
 ```bash
 git clone <repo> && cd swift-adapt
 swift build
-swift test          # 87 tests, offline
+swift test          # 110 tests, offline
 
 # Train an adapter on 50 example replies in a distinctive voice
 swift run -c release adapt-cli train \
