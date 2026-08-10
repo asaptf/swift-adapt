@@ -2,10 +2,6 @@
 
 Adapt is a Swift library that lets an iOS or macOS app ship a language model that gradually gets better at its specific user, entirely on-device. The app collects training signal, Adapt trains a LoRA adapter on it locally, evaluates the result on-device, and promotes the new adapter only if it beats the one in use. No server, no Python, no data leaving the machine.
 
-![The StyleMirror demo during a training pass](docs/images/training.gif)
-
-Above: the demo app training a real adapter — loss curve, tokens/sec, step count, time remaining, all streamed from the training loop in `Sources/AdaptTrain`. If the model or the seeded registry is missing, the app falls back to a scripted engine and marks the run `SCRIPTED` in red, because which engine is running changes what every number on screen means.
-
 ## Why this exists
 
 Apple's Foundation Models framework accepts custom LoRA adapters, but you train them offline on a Mac with Apple's Python toolkit. MLX Swift can train LoRA on-device, but ships as example code. What's missing is the product around the training loop: collecting signal, running training when the device can afford it, deciding whether the new adapter is actually better, rolling back when it isn't. Python can't fill that gap — it doesn't run on iOS, and the work is mostly OS integration: background tasks, thermal state, battery, Keychain, CloudKit. Adapt is that layer, plus the training and inference under it.
