@@ -36,6 +36,13 @@ public struct StatusStrip: View {
             Text("active adapter: \(state.activeVersionLabel)")
                 .textStyle(.dataS)
                 .foregroundStyle(Palette.inkSecondary)
+            // Stated, not hidden: with the scripted engine the numbers on screen
+            // are staged, and nothing else on the strip would reveal it.
+            if state.isUsingScriptedEngine {
+                Text("scripted")
+                    .textStyle(.label)
+                    .foregroundStyle(Palette.dataRed)
+            }
         }
         .frame(width: 320, alignment: .leading)
     }

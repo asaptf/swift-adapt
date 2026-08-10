@@ -4,7 +4,7 @@ Adapt is a Swift library that lets an iOS or macOS app ship a language model tha
 
 ![The StyleMirror demo during a training pass](docs/images/training.gif)
 
-Above: the demo app's training screen — loss curve, tokens/sec, step count, time remaining. `Examples/StyleMirror` currently drives those numbers from a scripted engine rather than from real training; [docs/demo.md](docs/demo.md) says which parts are real and which are staged.
+Above: the demo app training a real adapter — loss curve, tokens/sec, step count, time remaining, all streamed from the training loop in `Sources/AdaptTrain`. If the model or the seeded registry is missing, the app falls back to a scripted engine and marks the run `SCRIPTED` in red, because which engine is running changes what every number on screen means.
 
 ## Why this exists
 
@@ -104,7 +104,9 @@ Three rules the code enforces rather than promises. An adapter that is worse tha
 
 ## Demo
 
-`Examples/StyleMirror` is a macOS app built for a live five-minute demo. It currently runs on a scripted engine, not real training. The walkthrough is in [docs/demo.md](docs/demo.md).
+`Examples/StyleMirror` is a macOS app built for a live five-minute demo, running on the real library. Its version history comes from `scripts/seed-demo-registry.sh`, which trains seven adapters in seven separate processes, each resuming from the one before.
+
+Seeding it produced something the demo now leads with. The measured held-out loss over those seven nights went `4.06 → 3.70 → 3.38 → 3.42 → 3.19 → 3.12 → 3.34`: night seven came out worse than night six, on ordinary mail, and became the active adapter anyway — because promotion is manual until the evaluation gate exists. That is this project's own "never degrade" promise failing for want of the mechanism that enforces it. The walkthrough is in [docs/demo.md](docs/demo.md).
 
 ## License
 

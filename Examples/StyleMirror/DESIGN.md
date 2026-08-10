@@ -253,21 +253,36 @@ than the adapter reply. Vertical stacking inside columns (never a grid of nine
 cells) is what keeps it from reading as a spreadsheet. Bottom caption spanning
 all columns, Caption tertiary: copy §8.5.
 
-### 4.5 Gate — Poisoning
+### 4.5 Gate — the regression that actually happened
 
-Two columns plus a bottom strip.
+Two columns plus the timeline. The timeline is no longer decoration here: it is
+the evidence.
 
-- **Left, 500 wide: poisoned batch card.** Headline "Training batch — 20
-  examples". Three sample rows (Data M, primary, single line, truncated),
-  4th row "+ 17 more like this" in tertiary. Footer: primary button
-  "Train on this batch". No warning styling — the UI does not know yet, which is
-  the point.
-- **Right, 836 wide: pipeline card.** Top: three-stage stepper `Train →
-  Evaluate → Gate` (Label style; stages light up as reached, completed stages get
-  `checkmark.circle` in accent). Middle: eval checklist rows (§6.9) resolving
-  live. Bottom: verdict panel (§6.10).
-- **Bottom, 1360 × 158:** the same overnight timeline, now with a rejected
-  hollow node for v9 (§6.5).
+The seeded registry comes from seven real overnight runs, and the measured
+held-out loss went `4.06 → 3.70 → 3.38 → 3.42 → 3.19 → 3.12 → 3.34`. **Night
+seven is worse than night six**, on ordinary mail, with nothing sabotaged — and it
+is the active adapter, because promotion stays manual until the evaluation module
+exists. That is the argument. A staged failure invites the suspicion that it was
+staged; this one is in the data, and the audience can read it off the timeline.
+
+- **Left, 500 wide: the case.** Two rows comparing the active version against the
+  best measured one — version label, measured held-out loss, which is better.
+  Below them one line stating plainly that nothing checked. Footer: primary button
+  **"Roll back to v6"**. A secondary control swaps this card to the poisoned-batch
+  case below, so the screen carries two demonstrations without a sixth screen.
+- **Right, 836 wide: verdict card.** Stepper (`Measure → Compare → Decide`) and the
+  verdict panel (§6.10) reading "Would not have been promoted", with both measured
+  numbers. After the rollback it reports the **measured** duration — print what was
+  timed, never a literal.
+- **Bottom, 1360 × 158:** the overnight timeline (§6.5). Night seven sits visibly
+  above night six, because held-out loss is worse when higher. That upward kink is
+  the whole scene in one shape.
+
+**Second case — poisoned batch.** The original scene, kept and demoted: headline
+"Training batch — 20 examples", three truncated ALL-CAPS rows, "+ 17 more like
+this", button "Train on this batch". The same comparison refusing an obvious case
+lands better *after* the audience has watched it catch a real one. No warning
+styling — the UI does not know the batch is poisoned, which is still the point.
 
 ---
 
@@ -339,16 +354,23 @@ Card 1360 × 158. Left block, 240 wide: Label "OVERNIGHT RUNS" + two Caption
 lines: "7 nights · unattended · on battery" and "score = style match on held-out
 mail". Right: the plot.
 
-- X: equal slots per version. Y: eval score mapped over 55–80, so the polyline
-  itself visibly *ascends* — the rising line is the story, read from meters away.
+- X: equal slots per version. Y: the metric the registry actually recorded
+  (`EvalReport.primaryScore`), with the axis increasing upward and the range
+  derived from the data. Held-out cross-entropy is better when lower, so the
+  polyline visibly *descends* — the falling line is the story, read from meters
+  away. A "higher is better" metric would ascend under the same mapping.
 - Connecting polyline: 2 pt `accent` @ 50 %.
 - Past versions: 8 pt dots, `accent` @ 45 %. Active version: 12 pt solid
   `accent` dot with a 2 pt ring offset 2 pt (radar-blip emphasis, static).
 - Per node: version above (`v1`…, Data S tertiary; active version in accent),
   score below (Data S secondary; active score in accent).
-- Demo scores: 58 · 63 · 66 · 69 · 71 · 72 · 74, then v8 = 75 appended live.
-- **Rejected node (Gate screen only):** v9 plotted at its true score (41), far
-  below the line: 8 pt hollow circle, 1.5 pt `dataRed` stroke, reached by a 1 pt
+- Demo values are measured, not fixtures: seven real overnight runs recorded
+  held-out cross-entropy in nats/token (first run: 3.19 → 2.24 across the seven
+  nights, with the per-night gain shrinking after night two). Re-seeding on
+  different mail produces different numbers, which is the point.
+- **Rejected node (Gate screen only):** the refused candidate plotted at its
+  true measured value — for held-out loss that puts it *above* the line, since
+  worse means higher: 8 pt hollow circle, 1.5 pt `dataRed` stroke, reached by a 1 pt
   *dashed* tertiary connector; score `41` in dataRed; tag "not promoted" in
   Caption tertiary. Red marks the candidate's failure; the panel beside it wears
   green because the *system* succeeded. Never restyle the panel red.
@@ -478,7 +500,7 @@ emoji, no "magic", no "powerful". Where a claim is made, a number is nearby.
 - Chart header: **Training candidate v8** / `LoRA r=16 · 300 steps`
 - Tile labels: `STEP` `TOKENS PER SECOND` `ELAPSED` `REMAINING`
 - Timeline: `OVERNIGHT RUNS` / 7 nights · unattended · on battery /
-  score = style match on held-out mail
+  held-out loss on unseen mail · lower is better
 - Promotion: Gate: passed. v8 promoted — eval 75 against v7's 74.
 
 ### 8.4 Act 3 — Blind test
@@ -529,8 +551,9 @@ emoji, no "magic", no "powerful". Where a claim is made, a number is nearby.
   adapter. It was scored against held-out samples of your own mail and lost —
   41 to 75. v8 remains active. Nothing changed.
 - Active row: `Active adapter — v8 · unchanged`
-- Footnote: The same gate runs after every training pass, including the ones
-  that happen while you sleep.
+- Footnote: Provisional check: held-out loss against the active adapter. The
+  full promotion gate arrives with the evaluation module. (Until AdaptEval
+  exists, claiming the overnight gate already runs would be untrue.)
 
 ### 8.7 Empty states
 

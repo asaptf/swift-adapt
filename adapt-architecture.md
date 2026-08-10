@@ -436,7 +436,10 @@ The strongest demo is one where **training happens in front of the audience** �
 **Two amplifiers:**
 
 - **Code-switching.** A user writing in three languages shows the adapter learned their voice *in each* — a generic model writes correctly, the adapter writes like them. No cloud personalization demo shows this, because none is handed this much personal data.
-- **Poisoning.** For a technical audience: feed 20 examples of ALL-CAPS pirate slang, run the pipeline, and watch the **eval gate publicly refuse to promote** while the active version holds. This sells "never degrade" better than any slide, and it is precisely what separates a library from a script. Depends on M3.
+- **The regression that actually happened.** The demo's registry is seeded by seven real overnight runs, and on the first honest corpus the measured held-out loss went `4.06 → 3.70 → 3.38 → 3.42 → 3.19 → 3.12 → 3.34`. Night seven came out **worse than night six on ordinary mail, with no sabotage**, and became the active adapter anyway — because promotion is manual and the gate does not exist yet. That is this project's own "never degrade" promise failing for want of the mechanism that enforces it, and it is the strongest argument the demo has: measurement catches it, and rollback (an O(1) pointer flip) undoes it in milliseconds. A staged failure invites the suspicion that it was staged; this one is in the data.
+- **Poisoning**, kept as the *second* demonstration: 20 examples of ALL-CAPS pirate slang, refused by the same comparison. It shows the check works on an obvious case once the audience has seen it work on a real one.
+
+> Note for M3: the provisional check compares a candidate against the **active** version. Once a regression is active the bar drops — night eight measured 3.284 and would be accepted, because it only had to beat the regressed 3.341 rather than v6's 3.123. Comparing against the incumbent is correct; letting a regression *become* the incumbent is the bug. §4.5's gate is what prevents it.
 
 **60-second launch cut:** airplane mode → timelapse of seven nights (v1→v7, eval score climbing) → blind test.
 

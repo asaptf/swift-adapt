@@ -256,6 +256,12 @@ public enum StyleMirrorMetalSupport {
         var starts: [URL] = [
             URL(fileURLWithPath: FileManager.default.currentDirectoryPath)
         ]
+        // Launched from Finder or `open`, the working directory is `/` and argv[0]
+        // points inside the .app bundle, so neither walk reaches the checkout.
+        // The compile-time path does, which is what a demo built from source
+        // needs; it is tried last so a relocated build still prefers runtime
+        // discovery.
+        starts.append(URL(fileURLWithPath: #filePath).deletingLastPathComponent())
         for arg in CommandLine.arguments {
             if arg.hasPrefix("/") || arg.hasPrefix(".") {
                 starts.append(

@@ -19,10 +19,20 @@ public struct LanguagesScreen: View {
                 EmptyStateMessage(
                     text: "Train an adapter first. This screen compares it against the base model in three languages."
                 )
-            } else if let result = state.codeSwitch {
+            } else if let result = state.codeSwitch, !result.languages.isEmpty {
                 content(result)
+            } else if state.codeSwitch != nil {
+                // An empty result is a failure the engine did not report. Never
+                // print the argument over nothing.
+                EmptyStateMessage(
+                    text: "The engine returned no languages for this request. Nothing to compare — check that a model and an active adapter are available."
+                )
             } else {
-                EmptyStateMessage(text: "Loading…")
+                WorkIndicator(
+                    message: "Answering the same request in three languages, on-device. Six generations on a 4B model take a while.",
+                    completed: nil,
+                    total: nil
+                )
             }
         }
         .task { await state.loadCodeSwitching() }

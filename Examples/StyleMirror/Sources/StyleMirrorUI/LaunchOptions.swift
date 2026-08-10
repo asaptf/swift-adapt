@@ -22,17 +22,25 @@ public struct LaunchOptions: Sendable {
     public var preloadSampleCorpus: Bool
     /// Use the ~20 s pass instead of the stage-realistic ~2.5 min one.
     public var fastTraining: Bool
+    /// Force the scripted engine even when a real one could be built.
+    ///
+    /// The real engine loads a multi-gigabyte model and reads the seeded
+    /// registry; the scripted one starts instantly. Useful for UI iteration and
+    /// on machines without the model.
+    public var forceScripted: Bool
 
     public init(
         screen: DemoState.Screen? = nil,
         autorun: Bool = false,
         preloadSampleCorpus: Bool = false,
-        fastTraining: Bool = false
+        fastTraining: Bool = false,
+        forceScripted: Bool = false
     ) {
         self.screen = screen
         self.autorun = autorun
         self.preloadSampleCorpus = preloadSampleCorpus
         self.fastTraining = fastTraining
+        self.forceScripted = forceScripted
     }
 
     /// Parses `--screen <name>`, `--autorun`, `--preload-sample-corpus`.
@@ -57,6 +65,8 @@ public struct LaunchOptions: Sendable {
                 options.preloadSampleCorpus = true
             case "--fast":
                 options.fastTraining = true
+            case "--scripted":
+                options.forceScripted = true
             default:
                 break
             }

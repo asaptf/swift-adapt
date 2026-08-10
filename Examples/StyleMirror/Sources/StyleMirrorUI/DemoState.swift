@@ -53,6 +53,12 @@ public final class DemoState {
     public var versions: [AdapterVersion] = []
     public var activeVersion: AdapterVersion?
 
+    /// Whether the scripted engine is driving the demo rather than a real one.
+    ///
+    /// This changes what every number on screen means, so the UI states it
+    /// instead of letting scripted values pass for measurements.
+    public var isUsingScriptedEngine: Bool { engine is ScriptedEngine }
+
     /// Version label used across the strip and identity chips, e.g. `v8`.
     public var activeVersionLabel: String {
         activeVersion.map { "v\($0.version)" } ?? "none"
@@ -124,6 +130,35 @@ public final class DemoState {
     // MARK: Languages
 
     public var codeSwitch: CodeSwitchResult?
+
+    // MARK: Gate
+
+    /// Which case the Gate screen is arguing (`DESIGN.md` §4.5).
+    public enum GateCase: Sendable, CaseIterable, Identifiable {
+        /// The regression that actually happened on ordinary mail.
+        case regression
+        /// The deliberately corrupted batch — the secondary demonstration.
+        case poisoned
+
+        public var id: Self { self }
+
+        var title: String {
+            switch self {
+            case .regression: return "Night 7"
+            case .poisoned: return "Poisoned batch"
+            }
+        }
+    }
+
+    public var gateCase: GateCase = .regression
+    public var activeVsBest: ActiveVersusBest?
+    /// Retrospective verdict on the active version against the best measured one.
+    public var regressionOutcome: GateOutcome?
+    public var rollbackResult: RollbackResult?
+    /// Kept after a rollback: once the active version *is* the best one, the live
+    /// comparison is empty, but the screen still has to show what it just fixed.
+    public var lastRegressionComparison: ActiveVersusBest?
+    public var isRollingBack = false
 
     // MARK: Gate — the poisoning scene
 
@@ -241,6 +276,11 @@ public final class DemoState {
         guard !isRunningGate else { return }
         isRunningGate = true
         gateOutcome = nil
+        regressionOutcome = nil
+        rollbackResult = nil
+        activeVsBest = nil
+        lastRegressionComparison = nil
+        gateCase = .regression
         verdictVisible = false
         resolvedChecklistRows = 0
 
@@ -258,6 +298,35 @@ public final class DemoState {
         verdictVisible = true
         activeVersion = await engine.activeVersion()
         isRunningGate = false
+    }
+
+    /// Loads the real regression case: is the active adapter the best measured
+    /// one, and what would a comparison have said about it?
+    public func loadRegressionCase() async {
+        activeVsBest = await engine.activeVersusBestMeasured()
+        if let current = activeVsBest, !current.isActiveBest {
+            lastRegressionComparison = current
+        }
+        guard let comparison = activeVsBest, !comparison.isActiveBest else {
+            regressionOutcome = nil
+            return
+        }
+        regressionOutcome = try? await engine.compareRecordedVersions(
+            candidateVersion: comparison.active.version,
+            incumbentVersion: comparison.bestMeasured.version
+        )
+    }
+
+    /// Rolls the lineage back to the best measured version — a real registry
+    /// pointer flip, timed by the engine rather than announced by the UI.
+    public func rollBackToBest() async {
+        guard let comparison = activeVsBest, !comparison.isActiveBest, !isRollingBack else { return }
+        isRollingBack = true
+        rollbackResult = try? await engine.rollbackToVersion(comparison.bestMeasured.version)
+        versions = await engine.adapterVersions()
+        activeVersion = await engine.activeVersion()
+        activeVsBest = await engine.activeVersusBestMeasured()
+        isRollingBack = false
     }
 
     // MARK: Act 3
@@ -315,8 +384,13 @@ public final class DemoState {
             } else {
                 await reveal()
             }
-        case .gate where !isRunningGate:
-            await runPoisoning()
+        case .gate where !isRunningGate && !isRollingBack:
+            switch gateCase {
+            case .regression:
+                if rollbackResult == nil { await rollBackToBest() }
+            case .poisoned:
+                await runPoisoning()
+            }
         default:
             break
         }
@@ -364,6 +438,11 @@ public final class DemoState {
         codeSwitch = nil
         liveGateOutcome = nil
         gateOutcome = nil
+        regressionOutcome = nil
+        rollbackResult = nil
+        activeVsBest = nil
+        lastRegressionComparison = nil
+        gateCase = .regression
         verdictVisible = false
         resolvedChecklistRows = 0
         isRunningGate = false

@@ -24,7 +24,11 @@ public struct BlindTestScreen: View {
             } else if let round = state.round {
                 content(round)
             } else {
-                EmptyStateMessage(text: "Preparing a round…")
+                WorkIndicator(
+                    message: "Generating three replies on-device. The presenter prepares rounds during Act 2, while the model is already loaded.",
+                    completed: nil,
+                    total: nil
+                )
             }
         }
         .task {
