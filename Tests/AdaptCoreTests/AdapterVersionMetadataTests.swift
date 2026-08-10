@@ -97,6 +97,38 @@ struct AdapterVersionMetadataTests {
         #expect(decoded.notes == "measurement only")
     }
 
+    @Test("EvalReport gateDecision drives passedGate and round-trips")
+    func evalReportGateDecision() throws {
+        let promote = EvalReport(
+            primaryScore: 1.2,
+            gateDecision: .promote,
+            wilcoxonPValue: 0.01,
+            effectSize: 0.8
+        )
+        #expect(promote.passedGate == true)
+        #expect(promote.gateDecision == .promote)
+
+        let refuse = EvalReport(gateDecision: .refuse)
+        #expect(refuse.passedGate == false)
+
+        let abstain = EvalReport(gateDecision: .abstain)
+        #expect(abstain.passedGate == nil)
+
+        let encoder = JSONEncoder()
+        let data = try encoder.encode(promote)
+        let decoded = try JSONDecoder().decode(EvalReport.self, from: data)
+        #expect(decoded.gateDecision == .promote)
+        #expect(decoded.passedGate == true)
+        #expect(decoded.wilcoxonPValue == 0.01)
+        #expect(decoded.effectSize == 0.8)
+
+        // Legacy JSON without gate fields still decodes.
+        let minimal = Data(#"{}"#.utf8)
+        let legacy = try JSONDecoder().decode(EvalReport.self, from: minimal)
+        #expect(legacy.gateDecision == nil)
+        #expect(legacy.wilcoxonPValue == nil)
+    }
+
     @Test("TrainingWindow holds only metadata")
     func trainingWindowMetadataOnly() throws {
         let window = TrainingWindow(
