@@ -131,6 +131,21 @@ public final class DemoState {
 
     public var codeSwitch: CodeSwitchResult?
 
+    // MARK: Long-running generation
+
+    /// Progress for whichever generation is in flight, so the indicator can be
+    /// determinate rather than guessing a proportion.
+    public var workProgress: GenerationProgress?
+    /// Why a scene has nothing to show, when the engine says so explicitly.
+    public var unavailableReason: String?
+
+    /// Hops engine progress onto the main actor for the indicator.
+    private func progressHandler() -> GenerationProgressHandler {
+        { [weak self] progress in
+            Task { @MainActor in self?.workProgress = progress }
+        }
+    }
+
     // MARK: Gate
 
     /// Which case the Gate screen is arguing (`DESIGN.md` §4.5).
@@ -337,7 +352,20 @@ public final class DemoState {
         roundIndex += 1
         pickedCandidateID = nil
         revealResult = nil
-        round = try? await engine.prepareBlindRound(incomingEmailID: id)
+        unavailableReason = nil
+        workProgress = nil
+        do {
+            round = try await engine.prepareBlindRound(
+                incomingEmailID: id,
+                progress: progressHandler()
+            )
+        } catch {
+            // Surfaced, not swallowed: `try?` here hid a failing round behind an
+            // indefinite "preparing" state for two capture runs.
+            round = nil
+            unavailableReason = error.localizedDescription
+        }
+        workProgress = nil
     }
 
     public func pick(_ candidateID: UUID) {
@@ -367,7 +395,12 @@ public final class DemoState {
 
     public func loadCodeSwitching() async {
         guard codeSwitch == nil else { return }
-        codeSwitch = await engine.codeSwitchingDemo()
+        unavailableReason = nil
+        workProgress = nil
+        let result = await engine.codeSwitchingDemo(progress: progressHandler())
+        codeSwitch = result
+        unavailableReason = result.unavailabilityReason
+        workProgress = nil
     }
 
     // MARK: Presenter controls

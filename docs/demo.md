@@ -24,16 +24,12 @@ Then it is undone. Rollback is a pointer flip in the registry — no weights are
 
 The original scene — twenty examples of ALL-CAPS pirate slang, refused by the same comparison — is still there behind the second tab. It reads better once the audience has watched the check catch something real.
 
-## The blind test
+## Not ready yet: the blind test and the multilingual screen
 
-![Base model, adapter, and the human — unlabeled](images/03-blind-test.png)
+Two screens are built and wired to the real engine but are **not** presentable, and the honest thing is to say why rather than photograph them at a flattering moment.
 
-One incoming email, three candidate replies: the base model, the adapter, and one of the user's own replies. The audience guesses which is human.
+**The blind test** generates its three candidates on demand. In the app that takes about 30 seconds even in a release build, while the same work measured 1.9 seconds in a smoke test against a warm model — so something in the app's path is paying a cost the smoke test does not. The screen shows a progress indicator with a live clock while it waits, but the per-step counts the engine emits are not reaching it yet, so the bar cannot go determinate.
 
-Two rules make this worth running. Both models get the identical instruction, including the same length constraint — an earlier version asked them differently and the base model wrote 526 characters where the adapter wrote 59, which identified it from across the room without anyone reading a word. And the human reply comes from the held-out slice, mail the adapter was never trained on; otherwise the comparison is degenerate, because the model has been trained to emit that exact text.
+**Code-switching** renders correctly and generates for real, and the result does not support the claim the screen makes. English is passable. Spanish repeats itself and breaks off mid-word; Russian degenerates into a loop that is not a sentence. The base model answers sensibly in all three. With 20% of the training corpus in each non-English language and a rank-8 adapter, one adapter is not holding three voices — and the generation path does not apply a repetition penalty. Both are fixable; neither is fixed.
 
-## Same voice, three languages
-
-![One adapter answering in English, Spanish and Russian](images/04-languages.png)
-
-The same adapter answers in English, Spanish and Russian. The base model's reply is rendered dimmer and smaller than the adapter's on purpose — the layout is making the argument. The seven nights include Spanish and Russian mail in a 60/20/20 mix, so "your mail was already multilingual, so the adapter is too" is a claim about the training data rather than a slogan.
+Until they are, there is no screenshot of them here. A demo that photographs its worst screen at its best instant is the thing this project is trying not to be.

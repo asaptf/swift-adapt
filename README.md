@@ -45,6 +45,8 @@ The cause was that training and generation both bypassed the model's chat templa
 
 Qwen3's default chat template enables a reasoning trace, which is fine for a library and wrong for a side-by-side comparison. `GenerationOptions.chatTemplateEnableThinking` turns it off (CLI: `--chat-template-enable-thinking false`) by passing the `enable_thinking` variable through mlx-swift-lm's template context; the default follows the model's template so nothing changes silently.
 
+Two demo screens are also not ready. The blind test takes about 30 seconds to generate its three candidates in the app, against 1.9 seconds measured for the same work in a smoke test, and the engine's per-step progress is not reaching the UI. The multilingual screen generates for real and shows the adapter degrading in Spanish and Russian while the base model answers all three languages sensibly — 20% of the corpus per non-English language, rank 8, and no repetition penalty in the generation path.
+
 Two things are still open. Training 300 steps on 50 examples collapses the loss to 0.001 and bleeds training vocabulary into unrelated answers, so keep the step count low until the evaluation gate can stop training on held-out loss. And a base model asked for an email reply writes about 500 characters where the adapter writes 60 — accurate, but it means a side-by-side comparison has to constrain both sides to the same length, or length alone gives the answer away.
 
 ## Quickstart

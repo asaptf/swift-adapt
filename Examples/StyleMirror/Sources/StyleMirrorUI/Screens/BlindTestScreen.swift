@@ -24,11 +24,15 @@ public struct BlindTestScreen: View {
             } else if let round = state.round {
                 content(round)
             } else {
-                WorkIndicator(
-                    message: "Generating three replies on-device. The presenter prepares rounds during Act 2, while the model is already loaded.",
-                    completed: nil,
-                    total: nil
-                )
+                if let reason = state.unavailableReason {
+                    EmptyStateMessage(text: "No round to show — \(reason)")
+                } else {
+                    WorkIndicator(
+                        message: "Generating three replies on-device.",
+                        completed: state.workProgress?.completed,
+                        total: state.workProgress?.total
+                    )
+                }
             }
         }
         .task {

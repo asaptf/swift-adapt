@@ -25,13 +25,13 @@ public struct LanguagesScreen: View {
                 // An empty result is a failure the engine did not report. Never
                 // print the argument over nothing.
                 EmptyStateMessage(
-                    text: "The engine returned no languages for this request. Nothing to compare — check that a model and an active adapter are available."
+                    text: "Nothing to compare — \(state.unavailableReason ?? "the engine reported no languages for this request")."
                 )
             } else {
                 WorkIndicator(
-                    message: "Answering the same request in three languages, on-device. Six generations on a 4B model take a while.",
-                    completed: nil,
-                    total: nil
+                    message: "Answering the same request in three languages, base and adapter.",
+                    completed: state.workProgress?.completed,
+                    total: state.workProgress?.total
                 )
             }
         }
