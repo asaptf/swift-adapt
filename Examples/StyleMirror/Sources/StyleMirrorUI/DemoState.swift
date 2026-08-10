@@ -327,6 +327,9 @@ public final class DemoState {
     ///
     /// Used for rehearsal and screenshot capture so no synthetic input is needed.
     public func applyLaunchOptions(_ options: LaunchOptions = .fromCommandLine()) async {
+        if options.fastTraining {
+            trainingConfiguration = .uiDevelopment
+        }
         if options.preloadSampleCorpus, pastedCorpus.isEmpty {
             pastedCorpus = await engine.sentEmails
                 .map(\.body)

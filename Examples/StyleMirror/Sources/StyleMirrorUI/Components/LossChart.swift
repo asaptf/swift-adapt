@@ -21,6 +21,16 @@ public struct LossChart: View {
 
     private var head: LossPoint? { points.last }
 
+    /// Label stride chosen from the run length, aiming for four to six labels.
+    ///
+    /// A fixed stride only suits one run length: at 40 steps a stride of 50
+    /// leaves a single "0" on the axis, which is how this was first found.
+    private var xAxisValues: [Int] {
+        let target = max(1, totalSteps / 5)
+        let stride = [1, 2, 5, 10, 25, 50, 100, 250, 500].first { $0 >= target } ?? 1000
+        return Array(Swift.stride(from: 0, through: max(totalSteps, 1), by: stride))
+    }
+
     public var body: some View {
         Chart {
             ForEach(points) { point in
@@ -61,7 +71,7 @@ public struct LossChart: View {
         .chartXScale(domain: 0...max(totalSteps, 1))
         .chartYScale(domain: 0...4.0)
         .chartXAxis {
-            AxisMarks(values: .stride(by: 50)) { value in
+            AxisMarks(values: xAxisValues) { value in
                 AxisValueLabel {
                     Text(value.as(Int.self).map(String.init) ?? "")
                         .textStyle(.dataS)

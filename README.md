@@ -2,6 +2,10 @@
 
 Adapt is a Swift library that lets an iOS or macOS app ship a language model that gradually gets better at its specific user, entirely on-device. The app collects training signal, Adapt trains a LoRA adapter on it locally, evaluates the result on-device, and promotes the new adapter only if it beats the one in use. No server, no Python, no data leaving the machine.
 
+![The StyleMirror demo during a training pass](docs/images/training.gif)
+
+Above: the demo app's training screen — loss curve, tokens/sec, step count, time remaining. `Examples/StyleMirror` currently drives those numbers from a scripted engine rather than from real training; [docs/demo.md](docs/demo.md) says which parts are real and which are staged.
+
 ## Why this exists
 
 Apple's Foundation Models framework accepts custom LoRA adapters, but you train them offline on a Mac with Apple's Python toolkit. MLX Swift can train LoRA on-device, but ships as example code. What's missing is the product around the training loop: collecting signal, running training when the device can afford it, deciding whether the new adapter is actually better, rolling back when it isn't. Python can't fill that gap — it doesn't run on iOS, and the work is mostly OS integration: background tasks, thermal state, battery, Keychain, CloudKit. Adapt is that layer, plus the training and inference under it.
@@ -32,7 +36,13 @@ Not built yet:
 
 ### Known limitation: generation quality
 
-Generation quality is not yet demo-ready. A rank-8 adapter on a small model reliably reproduces the target voice's opening and sign-off, then repeats itself. A controlled experiment with pre-registered pass criteria failed on all three test prompts, in two different sampling configurations. The cause was identified — training and generation were bypassing the model's chat template, so the model was completing a document rather than answering — and a fix is in progress.
+Generation quality is usable but not finished.
+
+A controlled experiment with pre-registered pass criteria failed on all three test prompts in two sampling configurations: a rank-8 adapter reproduced the target voice's opening and sign-off, then repeated itself. Adding a repetition penalty did not fix it — the model simply cycled through variants of the sign-off instead of repeating it exactly.
+
+The cause was that training and generation both bypassed the model's chat template, so the model was continuing a document rather than answering a question. Both paths now go through one shared formatter, the convention used is recorded in the adapter's metadata, and a session refuses an adapter trained under a different convention rather than generating subtly wrong output. Measured after the change on Qwen3-4B-4bit at 100 steps: loss 9.63 → 1.49, and the base model produces a chat-conditioned reply instead of placeholder templates.
+
+Two things are still open. Training 300 steps on 50 examples collapses the loss to 0.001 and bleeds training vocabulary into unrelated answers; early stopping belongs to the evaluation gate in M2/M3, so for now keep the step count low. And Qwen3's default chat template enables a reasoning trace, which is fine for a library but wrong for a side-by-side comparison, so the demo's blind test is not ready.
 
 ## Quickstart
 

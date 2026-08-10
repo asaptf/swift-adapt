@@ -8,7 +8,7 @@ import Foundation
 /// as well; nothing is only available via a flag.
 ///
 /// ```
-/// StyleMirror --screen gate --autorun
+/// StyleMirror --screen train --preload-sample-corpus --fast --autorun
 /// ```
 public struct LaunchOptions: Sendable {
     /// Screen to open on, instead of Act 1.
@@ -20,15 +20,19 @@ public struct LaunchOptions: Sendable {
     /// A rehearsal aid only: in a real demo the presenter pastes their own mail,
     /// and the app trains on exactly what was pasted.
     public var preloadSampleCorpus: Bool
+    /// Use the ~20 s pass instead of the stage-realistic ~2.5 min one.
+    public var fastTraining: Bool
 
     public init(
         screen: DemoState.Screen? = nil,
         autorun: Bool = false,
-        preloadSampleCorpus: Bool = false
+        preloadSampleCorpus: Bool = false,
+        fastTraining: Bool = false
     ) {
         self.screen = screen
         self.autorun = autorun
         self.preloadSampleCorpus = preloadSampleCorpus
+        self.fastTraining = fastTraining
     }
 
     /// Parses `--screen <name>`, `--autorun`, `--preload-sample-corpus`.
@@ -51,6 +55,8 @@ public struct LaunchOptions: Sendable {
                 options.autorun = true
             case "--preload-sample-corpus":
                 options.preloadSampleCorpus = true
+            case "--fast":
+                options.fastTraining = true
             default:
                 break
             }
