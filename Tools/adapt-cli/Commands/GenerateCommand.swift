@@ -76,20 +76,42 @@ public struct GenerateCommand: AsyncParsableCommand {
             adapterDir = nil
             adapterLabel = "(skipped)"
         } else if let explicit = version {
-            let dir = await registry.directoryURL(for: lineage, version: explicit)
-            guard FileManager.default.fileExists(atPath: dir.path) else {
-                throw AdaptCLIError.registry("version v\(explicit) not found for lineage")
+            // Verify weights digest before loading (opt-in at this call site; §9).
+            do {
+                _ = try await registry.version(
+                    for: lineage,
+                    version: explicit,
+                    verifyIntegrity: true
+                )
+            } catch {
+                throw AdaptCLIError.registry(
+                    "version v\(explicit) failed integrity check or is missing: \(error.localizedDescription)"
+                )
             }
-            adapterDir = dir
+            adapterDir = await registry.directoryURL(for: lineage, version: explicit)
             adapterLabel = "v\(explicit)"
-        } else if let active = try await registry.activeVersion(for: lineage) {
+        } else if let active = try await registry.activeVersion(
+            for: lineage,
+            verifyIntegrity: true
+        ) {
             adapterDir = await registry.directoryURL(for: lineage, version: active.version)
             adapterLabel = "v\(active.version) (active)"
         } else {
             // Fall back to latest stored candidate so the acceptance demo works
-            // without a manual promote step.
+            // without a manual promote step. Still verify before loading.
             let versions = try await registry.listVersions(for: lineage)
             if let latest = versions.last {
+                do {
+                    _ = try await registry.version(
+                        for: lineage,
+                        version: latest.version,
+                        verifyIntegrity: true
+                    )
+                } catch {
+                    throw AdaptCLIError.registry(
+                        "latest candidate v\(latest.version) failed integrity check: \(error.localizedDescription)"
+                    )
+                }
                 adapterDir = await registry.directoryURL(for: lineage, version: latest.version)
                 adapterLabel = "v\(latest.version) (latest candidate)"
             } else {
