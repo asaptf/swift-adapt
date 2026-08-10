@@ -1,7 +1,7 @@
 import Foundation
 
 /// Errors originating from AdaptRegistry operations.
-public enum AdaptError: Error, LocalizedError, Sendable, Equatable {
+public enum AdaptRegistryError: Error, LocalizedError, Sendable, Equatable {
     /// The requested lineage directory or version does not exist.
     case notFound(String)
     /// Operation rejected because of registry invariants or bad arguments.

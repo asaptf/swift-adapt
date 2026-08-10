@@ -31,7 +31,7 @@ enum AtomicFileWriter {
             try FileProtection.apply(destination)
         } catch {
             try? FileManager.default.removeItem(at: tempURL)
-            throw AdaptError.ioFailed(
+            throw AdaptRegistryError.ioFailed(
                 "Failed to atomically write \(destination.lastPathComponent): \(error.localizedDescription)"
             )
         }
@@ -46,7 +46,7 @@ enum AtomicFileWriter {
         do {
             data = try encoder.encode(value)
         } catch {
-            throw AdaptError.codingFailed(
+            throw AdaptRegistryError.codingFailed(
                 "Failed to encode \(destination.lastPathComponent): \(error.localizedDescription)"
             )
         }
@@ -59,7 +59,7 @@ enum AtomicFileWriter {
         do {
             data = try Data(contentsOf: url)
         } catch {
-            throw AdaptError.ioFailed(
+            throw AdaptRegistryError.ioFailed(
                 "Failed to read \(url.lastPathComponent): \(error.localizedDescription)"
             )
         }
@@ -68,7 +68,7 @@ enum AtomicFileWriter {
         do {
             return try decoder.decode(type, from: data)
         } catch {
-            throw AdaptError.codingFailed(
+            throw AdaptRegistryError.codingFailed(
                 "Failed to decode \(url.lastPathComponent): \(error.localizedDescription)"
             )
         }

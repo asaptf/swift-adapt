@@ -128,7 +128,7 @@ public actor AdapterRegistry {
             // Publish: single rename within the lineage directory (atomic on APFS/HFS+).
             guard !fileManager.fileExists(atPath: versionDir.path) else {
                 try? fileManager.removeItem(at: stagingDir)
-                throw AdaptError.ioFailed(
+                throw AdaptRegistryError.ioFailed(
                     "Refusing to overwrite existing version directory v\(versionNumber)"
                 )
             }
@@ -162,7 +162,7 @@ public actor AdapterRegistry {
     public func promote(lineageID: String, version: Int) throws {
         let versionDir = versionDirectory(lineageID: lineageID, version: version)
         guard fileManager.fileExists(atPath: versionDir.path) else {
-            throw AdaptError.notFound("version v\(version) in lineage \(lineageID)")
+            throw AdaptRegistryError.notFound("version v\(version) in lineage \(lineageID)")
         }
 
         // Verify integrity before flipping the pointer.
@@ -193,7 +193,7 @@ public actor AdapterRegistry {
     public func rollback(lineageID: String, to version: Int) throws {
         let versionDir = versionDirectory(lineageID: lineageID, version: version)
         guard fileManager.fileExists(atPath: versionDir.path) else {
-            throw AdaptError.notFound("version v\(version) in lineage \(lineageID)")
+            throw AdaptRegistryError.notFound("version v\(version) in lineage \(lineageID)")
         }
 
         _ = try loadVersion(lineageID: lineageID, version: version, verifyIntegrity: true)
@@ -274,7 +274,7 @@ public actor AdapterRegistry {
                 options: [.skipsHiddenFiles]
             )
         } catch {
-            throw AdaptError.ioFailed("Failed to list lineage \(lineageID): \(error.localizedDescription)")
+            throw AdaptRegistryError.ioFailed("Failed to list lineage \(lineageID): \(error.localizedDescription)")
         }
 
         var versions: [AdapterVersion] = []
@@ -341,7 +341,7 @@ public actor AdapterRegistry {
     /// GC by lineage ID. Also purges staging leftovers.
     public func gc(lineageID: String, keepLast: Int) throws {
         guard keepLast >= 0 else {
-            throw AdaptError.invalidOperation("keepLast must be >= 0")
+            throw AdaptRegistryError.invalidOperation("keepLast must be >= 0")
         }
 
         try removeStagingDirectories(lineageID: lineageID)
@@ -364,7 +364,7 @@ public actor AdapterRegistry {
             do {
                 try fileManager.removeItem(at: dir)
             } catch {
-                throw AdaptError.ioFailed(
+                throw AdaptRegistryError.ioFailed(
                     "Failed to GC v\(meta.version): \(error.localizedDescription)"
                 )
             }
@@ -420,7 +420,7 @@ public actor AdapterRegistry {
                 options: []
             )
         } catch {
-            throw AdaptError.ioFailed(
+            throw AdaptRegistryError.ioFailed(
                 "Failed to scan version dirs for \(lineageID): \(error.localizedDescription)"
             )
         }
@@ -450,7 +450,7 @@ public actor AdapterRegistry {
         let versionDir = versionDirectory(lineageID: lineageID, version: version)
         let metaURL = versionDir.appendingPathComponent("version.json")
         guard fileManager.fileExists(atPath: metaURL.path) else {
-            throw AdaptError.notFound("version.json for v\(version) in \(lineageID)")
+            throw AdaptRegistryError.notFound("version.json for v\(version) in \(lineageID)")
         }
 
         var meta = try AtomicFileWriter.readJSON(AdapterVersion.self, from: metaURL)
@@ -466,17 +466,17 @@ public actor AdapterRegistry {
         if verifyIntegrity {
             let weightsURL = versionDir.appendingPathComponent("adapters.safetensors")
             guard fileManager.fileExists(atPath: weightsURL.path) else {
-                throw AdaptError.notFound("adapters.safetensors for v\(version)")
+                throw AdaptRegistryError.notFound("adapters.safetensors for v\(version)")
             }
             let data: Data
             do {
                 data = try Data(contentsOf: weightsURL)
             } catch {
-                throw AdaptError.ioFailed("Failed to read weights: \(error.localizedDescription)")
+                throw AdaptRegistryError.ioFailed("Failed to read weights: \(error.localizedDescription)")
             }
             let actual = Self.sha256Hex(data)
             if actual != meta.weightsDigest {
-                throw AdaptError.integrityMismatch(expected: meta.weightsDigest, actual: actual)
+                throw AdaptRegistryError.integrityMismatch(expected: meta.weightsDigest, actual: actual)
             }
         }
 
@@ -487,7 +487,7 @@ public actor AdapterRegistry {
         let metaURL = versionDirectory(lineageID: lineageID, version: version)
             .appendingPathComponent("version.json")
         guard fileManager.fileExists(atPath: metaURL.path) else {
-            throw AdaptError.notFound("version.json for v\(version)")
+            throw AdaptRegistryError.notFound("version.json for v\(version)")
         }
         let meta = try AtomicFileWriter.readJSON(AdapterVersion.self, from: metaURL)
         let updated = meta.with(status: status)
@@ -533,7 +533,7 @@ public actor AdapterRegistry {
                 options: []
             )
         } catch {
-            throw AdaptError.ioFailed(
+            throw AdaptRegistryError.ioFailed(
                 "Failed to list staging dirs for \(lineageID): \(error.localizedDescription)"
             )
         }
@@ -542,7 +542,7 @@ public actor AdapterRegistry {
             do {
                 try fileManager.removeItem(at: url)
             } catch {
-                throw AdaptError.ioFailed(
+                throw AdaptRegistryError.ioFailed(
                     "Failed to remove staging \(url.lastPathComponent): \(error.localizedDescription)"
                 )
             }

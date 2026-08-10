@@ -182,13 +182,13 @@ struct AdapterRegistryTests {
         do {
             _ = try await registry.version(for: lineage, version: 1, verifyIntegrity: true)
             Issue.record("expected integrity error")
-        } catch let error as AdaptRegistry.AdaptError {
+        } catch let error as AdaptRegistryError {
             guard case .integrityMismatch = error else {
                 Issue.record("expected integrityMismatch, got \(error)")
                 return
             }
         } catch {
-            Issue.record("expected AdaptRegistry.AdaptError, got \(error)")
+            Issue.record("expected AdaptRegistryError, got \(error)")
         }
     }
 
@@ -465,26 +465,26 @@ struct AdapterRegistryTests {
         do {
             _ = try await registry.activeVersion(for: lineage, verifyIntegrity: true)
             Issue.record("expected integrityMismatch")
-        } catch let error as AdaptRegistry.AdaptError {
+        } catch let error as AdaptRegistryError {
             guard case .integrityMismatch = error else {
                 Issue.record("expected integrityMismatch, got \(error)")
                 return
             }
         } catch {
-            Issue.record("expected AdaptRegistry.AdaptError, got \(error)")
+            Issue.record("expected AdaptRegistryError, got \(error)")
         }
 
         // Promote must still refuse unverified/corrupt weights.
         do {
             try await registry.promote(lineage: lineage, version: 1)
             Issue.record("expected promote to fail integrity check")
-        } catch let error as AdaptRegistry.AdaptError {
+        } catch let error as AdaptRegistryError {
             guard case .integrityMismatch = error else {
                 Issue.record("expected integrityMismatch on promote, got \(error)")
                 return
             }
         } catch {
-            Issue.record("expected AdaptRegistry.AdaptError, got \(error)")
+            Issue.record("expected AdaptRegistryError, got \(error)")
         }
     }
 }

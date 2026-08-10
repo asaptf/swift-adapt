@@ -1,7 +1,7 @@
 import Foundation
 
 /// Errors originating from AdaptCore operations.
-public enum AdaptError: Error, LocalizedError, Sendable, Equatable {
+public enum AdaptCoreError: Error, LocalizedError, Sendable, Equatable {
     /// A required value was missing or empty.
     case invalidArgument(String)
     /// Encoding or decoding of a core type failed.
