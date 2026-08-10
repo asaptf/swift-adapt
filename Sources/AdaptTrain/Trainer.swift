@@ -78,12 +78,14 @@ public actor Trainer {
     ///   - model: Trainable module wrapped for exclusive transfer.
     ///   - loss: Differentiable micro-batch loss.
     ///   - microbatch: Maps dataset indices → arrays consumed by `loss`.
+    ///   - onStep: Optional per-step progress callback (CLI streaming).
     @discardableResult
     public func run(
         budget: TrainBudget,
         model: SendingModule,
         loss: SendingLoss,
-        microbatch: SendingMicrobatch
+        microbatch: SendingMicrobatch,
+        onStep: (@Sendable (TrainStepProgress) -> Void)? = nil
     ) async throws -> TrainOutcome {
         try validate(budget: budget, config: config)
         Memory.memoryLimit = budget.maxMemoryMB * 1_024 * 1_024
@@ -145,6 +147,16 @@ public actor Trainer {
             lossesThisRun.append(stepResult.loss)
             tokensThisRun += stepResult.tokens
 
+            onStep?(
+                TrainStepProgress(
+                    stepsThisRun: stepsThisRun,
+                    lifetimeSteps: engine.lifetimeSteps,
+                    loss: stepResult.loss,
+                    tokensThisStep: stepResult.tokens,
+                    tokensThisRun: tokensThisRun
+                )
+            )
+
             stepsSinceCheckpoint += 1
             if stepsSinceCheckpoint >= checkpointEvery {
                 lastCandidate = try await checkpoint(engine: engine, examples: examples)
@@ -181,12 +193,15 @@ public actor Trainer {
     ///
     /// When `applyLoRA` is true, freezes the base and injects LoRA layers via
     /// `LoRAContainer.from` before training.
+    ///
+    /// - Parameter onStep: Optional per-step progress callback (CLI streaming).
     @discardableResult
     public func runLLM(
         budget: TrainBudget,
         model: SendingModule,
         tokenizer: any Tokenizer,
-        applyLoRA: Bool = false
+        applyLoRA: Bool = false,
+        onStep: (@Sendable (TrainStepProgress) -> Void)? = nil
     ) async throws -> TrainOutcome {
         let trainable = model.model
         if applyLoRA {
@@ -233,7 +248,8 @@ public actor Trainer {
             budget: budget,
             model: SendingModule(trainable),
             loss: SendingLoss(Self.llmCompletionLoss),
-            microbatch: micro
+            microbatch: micro,
+            onStep: onStep
         )
     }
 

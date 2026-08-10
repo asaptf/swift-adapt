@@ -92,8 +92,8 @@ metallib next to the test executable. Details:
 
 ## Public surface (summary)
 
-- `Trainer` actor — `run` / `runLLM`
-- `TrainConfig`, `TrainBudget`, `TrainOutcome`, `TrainStopReason`
+- `Trainer` actor — `run` / `runLLM` (optional per-step `onStep` progress)
+- `TrainConfig`, `TrainBudget`, `TrainOutcome`, `TrainStepProgress`, `TrainStopReason`
 - `TrainingDataSource`, `ArrayTrainingData`
 - `CheckpointableAdamW`, `SeededBatchIterator`, `PromptCompletionBatch`
 - `TrainCheckpoint` / `TrainStateFile` (on-disk format)

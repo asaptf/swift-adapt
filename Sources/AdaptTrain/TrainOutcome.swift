@@ -18,6 +18,37 @@ public enum TrainStopReason: String, Sendable, Codable, Hashable {
     case noData
 }
 
+/// Per-step progress snapshot emitted during ``Trainer/run``.
+///
+/// Free of user content — safe to log and print from the CLI.
+public struct TrainStepProgress: Sendable, Hashable {
+    /// Optimizer steps completed in **this** run so far (including this step).
+    public let stepsThisRun: Int
+    /// Lifetime optimizer step count after this step.
+    public let lifetimeSteps: Int
+    /// Scalar loss for the step just completed.
+    public let loss: Float
+    /// Tokens contributing to the loss on this step.
+    public let tokensThisStep: Int
+    /// Cumulative tokens processed in this run so far.
+    public let tokensThisRun: Int
+
+    /// Creates a progress snapshot.
+    public init(
+        stepsThisRun: Int,
+        lifetimeSteps: Int,
+        loss: Float,
+        tokensThisStep: Int,
+        tokensThisRun: Int
+    ) {
+        self.stepsThisRun = stepsThisRun
+        self.lifetimeSteps = lifetimeSteps
+        self.loss = loss
+        self.tokensThisStep = tokensThisStep
+        self.tokensThisRun = tokensThisRun
+    }
+}
+
 /// Result of a `Trainer.run` call.
 ///
 /// Sendable and free of user content — raw material for M3's `EvalReport`.
