@@ -12,6 +12,7 @@ let package = Package(
         .library(name: "AdaptRegistry", targets: ["AdaptRegistry"]),
         .library(name: "AdaptTrain", targets: ["AdaptTrain"]),
         .library(name: "AdaptInference", targets: ["AdaptInference"]),
+        .library(name: "AdaptEval", targets: ["AdaptEval"]),
         .executable(name: "adapt-cli", targets: ["adapt-cli"]),
     ],
     dependencies: [
@@ -36,10 +37,17 @@ let package = Package(
             exclude: ["README.md"]
         ),
         .target(
+            name: "AdaptEval",
+            dependencies: ["AdaptCore"],
+            path: "Sources/AdaptEval",
+            exclude: ["README.md"]
+        ),
+        .target(
             name: "AdaptTrain",
             dependencies: [
                 "AdaptCore",
                 "AdaptRegistry",
+                "AdaptEval",
                 .product(name: "MLXLLM", package: "mlx-swift-lm"),
                 .product(name: "MLXLMCommon", package: "mlx-swift-lm"),
                 .product(name: "MLX", package: "mlx-swift"),
@@ -69,6 +77,7 @@ let package = Package(
                 "AdaptRegistry",
                 "AdaptTrain",
                 "AdaptInference",
+                "AdaptEval",
                 .product(name: "ArgumentParser", package: "swift-argument-parser"),
                 .product(name: "MLXLLM", package: "mlx-swift-lm"),
                 .product(name: "MLXLMCommon", package: "mlx-swift-lm"),
@@ -113,6 +122,11 @@ let package = Package(
             name: "AdaptRegistryTests",
             dependencies: ["AdaptRegistry", "AdaptCore"],
             path: "Tests/AdaptRegistryTests"
+        ),
+        .testTarget(
+            name: "AdaptEvalTests",
+            dependencies: ["AdaptEval", "AdaptCore"],
+            path: "Tests/AdaptEvalTests"
         ),
         .testTarget(
             name: "AdaptTrainTests",
