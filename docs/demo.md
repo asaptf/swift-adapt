@@ -30,12 +30,16 @@ Then it is undone. Rollback is a pointer flip in the registry — no weights are
 
 The original scene — twenty examples of ALL-CAPS pirate slang, refused by the same comparison — is still there behind the second tab. It reads better once the audience has watched the check catch something real.
 
-## Not ready yet: the blind test and the multilingual screen
+## The blind test: what the 91 seconds actually were
 
-Two screens are built and wired to the real engine but are **not** presentable, and the honest thing is to say why rather than photograph them at a flattering moment.
+The blind test now finishes in the app — 2.09 seconds for the first round, 1.48 for a warm one — and the diagnosis is worth keeping, because every number I first reported about it pointed the wrong way.
 
-**The blind test does not finish in the app.** Its three candidates are generated on demand. A smoke harness measures that work at 3.8 seconds cold and 1.5 warm; the shipped app, release build, was still generating at **91 seconds** with the elapsed clock running. Caching the generation session fixed the harness and did not fix the app, so the two paths differ in something not yet identified — and at 91 seconds this is not a cold model load, which was my first guess and was wrong. The screen shows an honest indicator with a live clock, but the per-unit counts the engine emits still do not reach it, so it cannot go determinate.
+The screen appeared to be generating for 91 seconds while a smoke harness did the same work in 3.8. It was not generating at all. Launching with `--screen blind` raced the state load: the screen's one-shot task asked for a round before the example IDs and active adapter were populated, hit an early return, and never retried. The indicator spun, the elapsed clock ran, and no model was ever loaded — about 80 MB resident after 90 seconds is the tell I should have read sooner. "Slow" and "never started" look identical behind an indeterminate spinner, which is the argument for the indicator being determinate wherever counts exist.
+
+Two changes: the screen re-tasks when the active adapter appears and the round preparation self-heals its inputs, with a guard so the two paths cannot stack; and the progress handler became `async`, awaited between units, so counts paint while work is in flight instead of after it.
+
+## Not ready yet: the multilingual screen
 
 **Code-switching** is no longer performed, and its claim has been retired rather than tuned. The screen renders and generates for real; the result does not support "one adapter learned your voice in every language". English is fine. Spanish becomes coherent once a repetition penalty is applied. Russian degenerates under every sampling setting tried — temperature 0 to 0.4, top-p 0.85 to 0.9, penalty 1.2 to 1.35 — which changes the failure mode without producing a voice. A rank-8 adapter over a corpus with roughly a fifth of its examples per non-English language is a capacity limit, and fixing it means re-training the seven nights and re-deriving every number in this document. That was not worth doing for one screenshot, so the screen now shows the real output and states the boundary.
 
-Session caching and a yield between progress events fixed both symptoms **in the smoke harness**. Neither fixed the app. That gap is the open defect, and it is being investigated in the app's own path rather than in a harness — a fix verified only where the bug does not reproduce is not a fix.
+Session caching and a yield between progress events fixed both symptoms **in the smoke harness** and neither fixed the app, which is the whole lesson: a fix verified only where the bug does not reproduce is not a fix. The real cause was only visible once the app itself was instrumented.

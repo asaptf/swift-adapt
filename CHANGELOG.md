@@ -1,5 +1,17 @@
 # Changelog
 
+## Unreleased
+
+### Fixed
+
+- **The demo's blind test finishes in the app.** It was never slow generation — it never started. Launching with
+  `--screen blind` raced the state load: the screen's one-shot task called for a round while the example IDs and the
+  active adapter were still empty, hit an early return, and never retried, so the work indicator spun for as long as
+  anyone was willing to watch with no model ever loaded. Measured after the fix: 2.09 s for the first round in the
+  app, 1.48 s for a warm one.
+- Generation progress reaches the UI. The progress handler is now `async` and the engine awaits it between units, so
+  the determinate counts paint mid-flight instead of being starved until the whole operation returns.
+
 ## 0.2.0 — 2026-08-10
 
 Milestones 2 through 5, plus the inference layer that was split out of milestone 1.
@@ -55,7 +67,8 @@ Twelve findings from an external review, the ones that could lose data or mislea
   runs in the simulator; step cost, thermal behaviour and the background window on real hardware are unmeasured.
 - Encrypted sync between devices (M6) is not built.
 - The demo app promotes through a provisional threshold, not `AdaptEval`'s gate.
-- The demo's blind test needs about 90 seconds in the app against 3.8 seconds for the same work in a smoke test.
+- The demo's blind test never completed in the app: launching straight onto the screen raced the state load, so
+  generation never started. Fixed after 0.2.0 — see Unreleased.
 - A rank-8 adapter over a corpus that is 20% Spanish and 20% Russian does not hold a non-English voice. The
   multilingual demo screen was cut rather than tuned.
 
