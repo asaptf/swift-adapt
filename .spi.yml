@@ -1,0 +1,15 @@
+# Swift Package Index build configuration.
+# Tells the index which targets to generate DocC documentation for.
+# https://swiftpackageindex.com/SwiftPackageIndex/SPIManifest/documentation/spimanifest/commonusecases
+version: 1
+builder:
+  configs:
+    - documentation_targets:
+        - AdaptCore
+        - AdaptRegistry
+        - AdaptData
+        - AdaptTrain
+        - AdaptInference
+        - AdaptEval
+        - AdaptSchedule
+        - AdaptMacros

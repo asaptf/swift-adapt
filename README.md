@@ -16,28 +16,30 @@ Apple's Foundation Models framework accepts custom LoRA adapters, but you train 
 
 ## Status
 
-Milestone 1 of six is done and externally reviewed. Built and working today:
+Version 0.2.0. Five of the six planned milestones are built and covered by tests; milestone 1 was also reviewed externally. Built and working today:
 
 - **AdaptCore** — shared types. Adapter metadata never contains user text, only counts, date ranges and metric values.
+- **AdaptData** — SQLite replay buffer with a privacy budget, TTL pruning, and a scrubber pipeline that strips email addresses, IBANs, card and phone numbers before anything reaches storage.
 - **AdaptRegistry** — versioned adapter store. Atomic promote and rollback (rollback is a pointer flip; weights are never rewritten), SHA-256 integrity digests. Crash-safe: a process killed mid-checkpoint leaves the store readable.
 - **AdaptTrain** — interruption-safe LoRA training over MLX. Checkpoints every N steps; interrupting and resuming reproduces the uninterrupted run's loss curve and final weights to within 1e-5. It implements its own AdamW, because MLX's optimizer state cannot be serialized through its public API and resume would otherwise be impossible.
 - **AdaptInference** — loads the active adapter, streams generation, and hot-swaps adapters without reloading the model.
-- **adapt-cli** — `train`, `generate`, `inspect`, `promote` from the terminal.
+- **AdaptEval** — the promotion gate. A held-out set is pinned to the lineage and compared example by example rather than in aggregate, with a one-sided Wilcoxon signed-rank test at α = 0.05. "Not enough evidence" is a separate outcome from "worse", because collapsing the two either blocks good adapters or ships bad ones.
+- **AdaptSchedule** — the night pipeline (`prune → sample → train → eval → promote`), thermal and battery policy, a memory capability gate, and `BGProcessingTask` registration. Promotion goes through the gate, never a bare score comparison.
+- **AdaptMacros** — `@Personalizable(task:)`, `@Prompt`, `@Completion`.
+- **adapt-cli** — `train`, `generate`, `eval`, `inspect`, `promote` from the terminal.
 
 Measured on an M5 Pro:
 
-- 119 tests, all offline — no network, no model downloads in the test suite.
+- 212 tests in 44 suites, all offline — no network, no model downloads in the test suite.
 - Training Qwen3-4B-4bit, rank 8, 16 adapted layers, 100 steps: 15 s, 2.4 GB peak memory, a 10 MB adapter of 2.6M parameters.
 - The default adapts attention projections only. Adapting the MLP projections as well costs 7.3M parameters and 28 MB for no visible gain in style, and reaches a lower training loss largely by memorising more.
 - Adapter hot-swap: 8 ms for a rank-8 adapter.
 
-Not built yet:
+Not built, and not claimed:
 
-- Replay buffer with PII scrubbing and a privacy budget (M2).
-- The on-device evaluation gate that decides promotion (M3). Until it exists, promotion is manual.
-- Background scheduling and iOS support (M4).
-- The `@Personalizable` macro (M5).
 - Encrypted CloudKit sync between devices (M6).
+- On-device training on a physical iPhone. The iOS build compiles and links, and the pipeline runs in the simulator, but step cost, thermal behaviour and the real background window are unmeasured on hardware.
+- The demo app still promotes through a provisional threshold rather than `AdaptEval`'s gate. The gate is library code with its own tests; the sample app has not been moved onto it.
 
 ### Known limitation: generation quality
 
@@ -49,16 +51,33 @@ The cause was that training and generation both bypassed the model's chat templa
 
 Qwen3's default chat template enables a reasoning trace, which is fine for a library and wrong for a side-by-side comparison. `GenerationOptions.chatTemplateEnableThinking` turns it off (CLI: `--chat-template-enable-thinking false`) by passing the `enable_thinking` variable through mlx-swift-lm's template context; the default follows the model's template so nothing changes silently.
 
-Two demo screens are also not ready. The blind test takes about 30 seconds to generate its three candidates in the app, against 1.9 seconds measured for the same work in a smoke test, and the engine's per-step progress is not reaching the UI. The multilingual screen generates for real and shows the adapter degrading in Spanish and Russian while the base model answers all three languages sensibly — 20% of the corpus per non-English language, rank 8, and no repetition penalty in the generation path.
+One demo screen is still not ready. The blind test needs about 90 seconds to generate its candidates in the app, against 3.8 seconds measured for the same work in a smoke test; the gap is in the app's path rather than the library's, and it is not fixed yet. A second screen was cut rather than tuned: a rank-8 adapter over a corpus that is 20% Spanish and 20% Russian does not hold a non-English voice, and the sampling knobs changed which way it failed instead of fixing it, so the multilingual claim was retired.
 
-Two things are still open. Training 300 steps on 50 examples collapses the loss to 0.001 and bleeds training vocabulary into unrelated answers, so keep the step count low until the evaluation gate can stop training on held-out loss. And a base model asked for an email reply writes about 500 characters where the adapter writes 60 — accurate, but it means a side-by-side comparison has to constrain both sides to the same length, or length alone gives the answer away.
+Two things are still open. Training 300 steps on 50 examples collapses the loss to 0.001 and bleeds training vocabulary into unrelated answers, so keep the step count low. `AdaptEval` measures held-out loss and refuses to promote a regression, but nothing stops a training run early on it. And a base model asked for an email reply writes about 500 characters where the adapter writes 60 — accurate, but it means a side-by-side comparison has to constrain both sides to the same length, or length alone gives the answer away.
+
+## Installation
+
+```swift
+dependencies: [
+    .package(url: "https://github.com/asaptf/swift-adapt.git", from: "0.2.0"),
+]
+```
+
+Each module is its own product, so an app that only generates text never links the training code:
+
+```swift
+.target(name: "YourApp", dependencies: [
+    .product(name: "AdaptInference", package: "swift-adapt"),
+    .product(name: "AdaptRegistry", package: "swift-adapt"),
+])
+```
 
 ## Quickstart
 
 ```bash
-git clone <repo> && cd swift-adapt
+git clone https://github.com/asaptf/swift-adapt.git && cd swift-adapt
 swift build
-swift test          # 119 tests, offline
+swift test          # 212 tests, offline
 
 # Train an adapter on 50 example replies in a distinctive voice
 swift run -c release adapt-cli train \
@@ -106,7 +125,7 @@ Dependencies: mlx-swift, mlx-swift-lm, swift-argument-parser. The library module
 
 ## Design
 
-Three rules the code enforces rather than promises. An adapter that is worse than the current one is never shipped; once the evaluation gate (M3) exists, promotion requires a measured win, and rollback is always a pointer flip away. Training runs only when the user won't notice; the scheduler is M4 work, but the training core is already built to be interrupted at any step and resumed without drift. And Adapt is not tied to one model — anything MLX can load works.
+Three rules the code enforces rather than promises. An adapter that is worse than the current one is never shipped: promotion through the pipeline requires a measured win on a held-out set pinned to the lineage — the registry's own `promote` stays available for tools and tests that need to bypass it — and rollback is always a pointer flip away. Training runs only when the user won't notice; the scheduler checks thermal state, battery and available memory before it starts, and the training core can be interrupted at any step and resumed without drift. And Adapt is not tied to one model — anything MLX can load works.
 
 ## Demo
 
