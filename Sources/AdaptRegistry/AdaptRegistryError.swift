@@ -6,6 +6,12 @@ public enum AdaptRegistryError: Error, LocalizedError, Sendable, Equatable {
     case notFound(String)
     /// Operation rejected because of registry invariants or bad arguments.
     case invalidOperation(String)
+    /// A public `lineageID:` argument is not a valid SHA-256 hex path component.
+    ///
+    /// Lineage IDs are 64 lowercase hex characters by construction. Anything
+    /// else (path separators, `..`, wrong length/alphabet) is rejected before
+    /// the registry touches the filesystem.
+    case invalidLineageID(String)
     /// On-disk weights digest does not match metadata.
     case integrityMismatch(expected: String, actual: String)
     /// Filesystem or I/O failure.
@@ -19,6 +25,8 @@ public enum AdaptRegistryError: Error, LocalizedError, Sendable, Equatable {
             return "Not found: \(message)"
         case .invalidOperation(let message):
             return "Invalid operation: \(message)"
+        case .invalidLineageID(let message):
+            return "Invalid lineage ID: \(message)"
         case .integrityMismatch(let expected, let actual):
             return "Integrity mismatch: expected \(expected), got \(actual)"
         case .ioFailed(let message):

@@ -70,17 +70,18 @@ public actor AdapterRegistry {
         evalReport: EvalReport? = nil
     ) throws -> AdapterVersion {
         let lineageID = lineage.lineageID
-        let lineageDir = lineageDirectory(for: lineageID)
+        let lineageDir = try lineageDirectory(for: lineageID)
         try fileManager.createDirectory(at: lineageDir, withIntermediateDirectories: true)
         try FileProtection.apply(lineageDir)
 
         // Ensure state.json exists so the lineage is always openable.
-        if !fileManager.fileExists(atPath: stateURL(lineageID: lineageID).path) {
-            try AtomicFileWriter.writeJSON(LineageState(), to: stateURL(lineageID: lineageID))
+        let statePath = try stateURL(lineageID: lineageID)
+        if !fileManager.fileExists(atPath: statePath.path) {
+            try AtomicFileWriter.writeJSON(LineageState(), to: statePath)
         }
 
         let versionNumber = try nextVersionNumber(lineageID: lineageID)
-        let versionDir = versionDirectory(lineageID: lineageID, version: versionNumber)
+        let versionDir = try versionDirectory(lineageID: lineageID, version: versionNumber)
 
         // Stage fully, then rename into `v<N>/` so observers never see a partial version.
         let stagingName = "\(Self.stagingPrefix)\(UUID().uuidString)"
@@ -160,7 +161,8 @@ public actor AdapterRegistry {
     ///
     /// Always verifies weights integrity — an unverified adapter must never become active.
     public func promote(lineageID: String, version: Int) throws {
-        let versionDir = versionDirectory(lineageID: lineageID, version: version)
+        try Self.validateLineageID(lineageID)
+        let versionDir = try versionDirectory(lineageID: lineageID, version: version)
         guard fileManager.fileExists(atPath: versionDir.path) else {
             throw AdaptRegistryError.notFound("version v\(version) in lineage \(lineageID)")
         }
@@ -191,7 +193,8 @@ public actor AdapterRegistry {
     ///
     /// Always verifies weights integrity of the rollback target.
     public func rollback(lineageID: String, to version: Int) throws {
-        let versionDir = versionDirectory(lineageID: lineageID, version: version)
+        try Self.validateLineageID(lineageID)
+        let versionDir = try versionDirectory(lineageID: lineageID, version: version)
         guard fileManager.fileExists(atPath: versionDir.path) else {
             throw AdaptRegistryError.notFound("version v\(version) in lineage \(lineageID)")
         }
@@ -213,6 +216,7 @@ public actor AdapterRegistry {
 
     /// Clears the active pointer by lineage ID.
     public func clearActive(lineageID: String) throws {
+        try Self.validateLineageID(lineageID)
         try commitActivePointer(lineageID: lineageID, newActive: nil)
     }
 
@@ -238,6 +242,7 @@ public actor AdapterRegistry {
         lineageID: String,
         verifyIntegrity: Bool = false
     ) throws -> AdapterVersion? {
+        try Self.validateLineageID(lineageID)
         let state = try loadState(lineageID: lineageID)
         guard let version = state.activeVersion else { return nil }
         return try loadVersion(
@@ -260,7 +265,8 @@ public actor AdapterRegistry {
 
     /// Lists complete versions by lineage ID. Partial/unreadable directories are ignored.
     public func listVersions(lineageID: String) throws -> [AdapterVersion] {
-        let lineageDir = lineageDirectory(for: lineageID)
+        try Self.validateLineageID(lineageID)
+        let lineageDir = try lineageDirectory(for: lineageID)
         guard fileManager.fileExists(atPath: lineageDir.path) else {
             return []
         }
@@ -319,14 +325,17 @@ public actor AdapterRegistry {
     }
 
     /// Absolute URL of a version's weights file (for later modules / CLI).
+    ///
+    /// Lineage IDs from `AdapterLineage` are always valid SHA-256 hex; this path
+    /// helper traps only if that invariant is broken.
     public func weightsURL(for lineage: AdapterLineage, version: Int) -> URL {
-        versionDirectory(lineageID: lineage.lineageID, version: version)
+        versionDirectoryUnchecked(lineageID: lineage.lineageID, version: version)
             .appendingPathComponent("adapters.safetensors")
     }
 
     /// Absolute URL of a version directory.
     public func directoryURL(for lineage: AdapterLineage, version: Int) -> URL {
-        versionDirectory(lineageID: lineage.lineageID, version: version)
+        versionDirectoryUnchecked(lineageID: lineage.lineageID, version: version)
     }
 
     /// Deletes old versions, keeping the most recent `keepLast` plus always the active one.
@@ -340,6 +349,7 @@ public actor AdapterRegistry {
 
     /// GC by lineage ID. Also purges staging leftovers.
     public func gc(lineageID: String, keepLast: Int) throws {
+        try Self.validateLineageID(lineageID)
         guard keepLast >= 0 else {
             throw AdaptRegistryError.invalidOperation("keepLast must be >= 0")
         }
@@ -360,7 +370,7 @@ public actor AdapterRegistry {
         }
 
         for meta in versions where !keep.contains(meta.version) {
-            let dir = versionDirectory(lineageID: lineageID, version: meta.version)
+            let dir = try versionDirectory(lineageID: lineageID, version: meta.version)
             do {
                 try fileManager.removeItem(at: dir)
             } catch {
@@ -373,16 +383,46 @@ public actor AdapterRegistry {
 
     // MARK: - Paths
 
-    private func lineageDirectory(for lineageID: String) -> URL {
-        rootURL.appendingPathComponent(lineageID, isDirectory: true)
+    /// Validates a public `lineageID` path component.
+    ///
+    /// Lineage IDs are SHA-256 hex by construction (`AdapterLineage.lineageID`):
+    /// exactly 64 lowercase hex characters. Reject anything else before it can
+    /// escape the registry root via `/`, `..`, or other path tricks.
+    package static func validateLineageID(_ lineageID: String) throws {
+        guard lineageID.count == 64 else {
+            throw AdaptRegistryError.invalidLineageID(
+                "expected 64-char SHA-256 hex, got length \(lineageID.count)"
+            )
+        }
+        for scalar in lineageID.unicodeScalars {
+            let isDigit = scalar >= "0" && scalar <= "9"
+            let isLowerHex = scalar >= "a" && scalar <= "f"
+            guard isDigit || isLowerHex else {
+                throw AdaptRegistryError.invalidLineageID(
+                    "expected lowercase hex [0-9a-f], got \(lineageID)"
+                )
+            }
+        }
     }
 
-    private func versionDirectory(lineageID: String, version: Int) -> URL {
-        lineageDirectory(for: lineageID).appendingPathComponent("v\(version)", isDirectory: true)
+    private func lineageDirectory(for lineageID: String) throws -> URL {
+        try Self.validateLineageID(lineageID)
+        return rootURL.appendingPathComponent(lineageID, isDirectory: true)
     }
 
-    private func stateURL(lineageID: String) -> URL {
-        lineageDirectory(for: lineageID).appendingPathComponent("state.json")
+    private func versionDirectory(lineageID: String, version: Int) throws -> URL {
+        try lineageDirectory(for: lineageID).appendingPathComponent("v\(version)", isDirectory: true)
+    }
+
+    /// Path helper for `AdapterLineage`-sourced IDs (already valid SHA-256 hex).
+    private func versionDirectoryUnchecked(lineageID: String, version: Int) -> URL {
+        rootURL
+            .appendingPathComponent(lineageID, isDirectory: true)
+            .appendingPathComponent("v\(version)", isDirectory: true)
+    }
+
+    private func stateURL(lineageID: String) throws -> URL {
+        try lineageDirectory(for: lineageID).appendingPathComponent("state.json")
     }
 
     // MARK: - Internals
@@ -408,7 +448,7 @@ public actor AdapterRegistry {
 
     /// Highest `N` among sibling directories named `vN`, or `0` if none.
     private func highestVersionDirectoryNumber(lineageID: String) throws -> Int {
-        let lineageDir = lineageDirectory(for: lineageID)
+        let lineageDir = try lineageDirectory(for: lineageID)
         guard fileManager.fileExists(atPath: lineageDir.path) else { return 0 }
 
         let contents: [URL]
@@ -435,7 +475,7 @@ public actor AdapterRegistry {
     }
 
     private func loadState(lineageID: String) throws -> LineageState {
-        let url = stateURL(lineageID: lineageID)
+        let url = try stateURL(lineageID: lineageID)
         if !fileManager.fileExists(atPath: url.path) {
             return LineageState()
         }
@@ -447,7 +487,7 @@ public actor AdapterRegistry {
         version: Int,
         verifyIntegrity: Bool
     ) throws -> AdapterVersion {
-        let versionDir = versionDirectory(lineageID: lineageID, version: version)
+        let versionDir = try versionDirectory(lineageID: lineageID, version: version)
         let metaURL = versionDir.appendingPathComponent("version.json")
         guard fileManager.fileExists(atPath: metaURL.path) else {
             throw AdaptRegistryError.notFound("version.json for v\(version) in \(lineageID)")
@@ -484,7 +524,7 @@ public actor AdapterRegistry {
     }
 
     private func updateVersionStatus(lineageID: String, version: Int, status: AdapterStatus) throws {
-        let metaURL = versionDirectory(lineageID: lineageID, version: version)
+        let metaURL = try versionDirectory(lineageID: lineageID, version: version)
             .appendingPathComponent("version.json")
         guard fileManager.fileExists(atPath: metaURL.path) else {
             throw AdaptRegistryError.notFound("version.json for v\(version)")
@@ -517,12 +557,12 @@ public actor AdapterRegistry {
         }
 
         state.activeVersion = newActive
-        try AtomicFileWriter.writeJSON(state, to: stateURL(lineageID: lineageID))
+        try AtomicFileWriter.writeJSON(state, to: try stateURL(lineageID: lineageID))
     }
 
     /// Removes leftover `.staging-*` directories under a lineage (crashed stores).
     private func removeStagingDirectories(lineageID: String) throws {
-        let lineageDir = lineageDirectory(for: lineageID)
+        let lineageDir = try lineageDirectory(for: lineageID)
         guard fileManager.fileExists(atPath: lineageDir.path) else { return }
 
         let contents: [URL]

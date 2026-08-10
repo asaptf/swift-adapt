@@ -487,6 +487,62 @@ struct AdapterRegistryTests {
             Issue.record("expected AdaptRegistryError, got \(error)")
         }
     }
+
+    @Test("lineageID with path separators is rejected")
+    func rejectsPathTraversalLineageID() async throws {
+        let (registry, root) = try makeRegistry()
+        defer { teardown(root) }
+
+        let badIDs = [
+            "../escape",
+            "foo/bar",
+            String(repeating: "b", count: 63),  // wrong length (63)
+            String(repeating: "b", count: 65),  // wrong length (65)
+            String(repeating: "g", count: 64),  // g is not hex
+            String(repeating: "A", count: 64),  // uppercase not allowed
+            "../../tmp",
+            "abc",
+        ]
+        for bad in badIDs {
+            do {
+                _ = try await registry.listVersions(lineageID: bad)
+                Issue.record("expected invalidLineageID for \(bad)")
+            } catch let error as AdaptRegistryError {
+                guard case .invalidLineageID = error else {
+                    Issue.record("expected invalidLineageID for \(bad), got \(error)")
+                    return
+                }
+            } catch {
+                Issue.record("expected AdaptRegistryError for \(bad), got \(error)")
+            }
+        }
+
+        // Valid 64-char lowercase hex is accepted (empty lineage → []).
+        let valid = String(repeating: "ab", count: 32)  // 64 chars of a,b
+        let listed = try await registry.listVersions(lineageID: valid)
+        #expect(listed.isEmpty)
+
+        // promote/gc/clearActive also reject.
+        do {
+            try await registry.promote(lineageID: "../x", version: 1)
+            Issue.record("expected promote to reject")
+        } catch let error as AdaptRegistryError {
+            guard case .invalidLineageID = error else {
+                Issue.record("expected invalidLineageID on promote, got \(error)")
+                return
+            }
+        }
+
+        do {
+            try await registry.gc(lineageID: "not-a-digest", keepLast: 1)
+            Issue.record("expected gc to reject")
+        } catch let error as AdaptRegistryError {
+            guard case .invalidLineageID = error else {
+                Issue.record("expected invalidLineageID on gc, got \(error)")
+                return
+            }
+        }
+    }
 }
 
 // Test-only helpers to toggle package fault flags from the test target.
