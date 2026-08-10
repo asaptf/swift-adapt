@@ -8,7 +8,7 @@ import SwiftUI
 /// crop and downscales to 1080p cleanly at 2× Retina (`DESIGN.md` §4).
 @main
 struct StyleMirrorApp: App {
-    @State private var state = DemoState(engine: ScriptedEngine(seed: 42))
+    @State private var state = DemoState { ScriptedEngine(seed: 42) }
 
     var body: some Scene {
         WindowGroup("StyleMirror") {

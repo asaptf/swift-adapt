@@ -81,6 +81,29 @@ public final class DemoState {
             .count
     }
 
+    /// The pasted corpus as training examples — one per blank-line-separated block.
+    ///
+    /// The demo trains on what the presenter actually pasted. Mirrors
+    /// `SampleCorpus.trainingExamples`' shape so the real `AdaptTrain` backend
+    /// receives the same prompt/completion convention.
+    ///
+    /// Source is `.explicitEdit` (weight 1.0): this is prose the user wrote
+    /// themselves, which is the gold signal — not `.synthetic`, which §4.2
+    /// reserves for app-provided seed examples.
+    public var pastedTrainingExamples: [TrainingExample] {
+        pastedCorpus
+            .components(separatedBy: "\n\n")
+            .map { $0.trimmingCharacters(in: .whitespacesAndNewlines) }
+            .filter { !$0.isEmpty }
+            .map { body in
+                TrainingExample(
+                    prompt: "Write a reply email in your own voice.",
+                    completion: body,
+                    source: .explicitEdit
+                )
+            }
+    }
+
     /// Rough token estimate (~4 characters per token) for the corpus chips.
     public var pastedTokenEstimate: Int {
         pastedCorpus.isEmpty ? 0 : max(1, pastedCorpus.count / 4)
@@ -114,11 +137,16 @@ public final class DemoState {
 
     // MARK: Dependencies
 
-    private let engine: any StyleMirrorEngine
+    /// Recreated on reset: a demo session accumulates promotions and tally, so
+    /// restoring the opening state (§5's ⌘⇧R) needs a fresh engine, not a reload
+    /// of the mutated one.
+    private let makeEngine: @Sendable () -> any StyleMirrorEngine
+    private var engine: any StyleMirrorEngine
     private let reachability = NetworkReachability()
 
-    public init(engine: any StyleMirrorEngine) {
-        self.engine = engine
+    public init(makeEngine: @escaping @Sendable () -> any StyleMirrorEngine) {
+        self.makeEngine = makeEngine
+        self.engine = makeEngine()
     }
 
     // MARK: Lifecycle
@@ -166,8 +194,10 @@ public final class DemoState {
         progress = nil
         promotionMessage = nil
 
-        let examples = SampleCorpus.trainingExamples()
-        for await update in engine.train(examples: examples, configuration: trainingConfiguration) {
+        for await update in engine.train(
+            examples: pastedTrainingExamples,
+            configuration: trainingConfiguration
+        ) {
             progress = update
             if !update.isFinished {
                 lossPoints.append(
@@ -315,8 +345,13 @@ public final class DemoState {
         resolvedChecklistRows = 0
         isRunningGate = false
         roundIndex = 0
+        pastedCorpus = ""
         screen = .offline
+
+        engine = makeEngine()
         versions = await engine.adapterVersions()
         activeVersion = await engine.activeVersion()
+        incomingIDs = await engine.blindTestIncomingIDs
+        tally = await engine.blindTestTally()
     }
 }
