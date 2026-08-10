@@ -26,11 +26,18 @@ public struct AdapterLineage: Codable, Sendable, Hashable {
     /// Derived as lowercase hex SHA-256 of a canonical UTF-8 payload:
     /// `taskID\\0baseModelID\\0` + JSON of `loraConfig` (sorted keys via
     /// `JSONEncoder` with sorted keys). Same inputs always yield the same ID.
+    ///
+    /// Encoding a pure-value `Codable` `LoRAConfig` cannot fail in practice.
+    /// If it ever did, this property traps rather than returning a wrong ID that
+    /// would silently merge distinct lineages on disk.
     public var lineageID: String {
         Self.computeLineageID(taskID: taskID, baseModelID: baseModelID, loraConfig: loraConfig)
     }
 
     /// Computes the lineage digest used as a registry directory name.
+    ///
+    /// Traps if `LoRAConfig` encoding fails: a fallback identity would be worse
+    /// than a crash (two different configs would share one on-disk directory).
     public static func computeLineageID(
         taskID: String,
         baseModelID: String,
@@ -39,13 +46,19 @@ public struct AdapterLineage: Codable, Sendable, Hashable {
         let encoder = JSONEncoder()
         encoder.outputFormatting = [.sortedKeys]
         // Deterministic float formatting is handled by Foundation's JSONEncoder.
-        guard let configData = try? encoder.encode(loraConfig),
-              let configJSON = String(data: configData, encoding: .utf8)
-        else {
-            // Encoding of a pure-value Codable type cannot fail in practice;
-            // fall back to an empty config JSON to keep the API non-throwing.
-            let fallback = #"{"fine_tune_type":"lora","lora_parameters":{"rank":8,"scale":10},"num_layers":16}"#
-            return hashCanonical(taskID: taskID, baseModelID: baseModelID, configJSON: fallback)
+        let configData: Data
+        do {
+            configData = try encoder.encode(loraConfig)
+        } catch {
+            // Impossible for a pure-value Codable; never substitute a default config.
+            preconditionFailure(
+                "LoRAConfig JSON encoding failed unexpectedly — refusing to invent a lineageID: \(error)"
+            )
+        }
+        guard let configJSON = String(data: configData, encoding: .utf8) else {
+            preconditionFailure(
+                "LoRAConfig JSON was not valid UTF-8 — refusing to invent a lineageID"
+            )
         }
         return hashCanonical(taskID: taskID, baseModelID: baseModelID, configJSON: configJSON)
     }

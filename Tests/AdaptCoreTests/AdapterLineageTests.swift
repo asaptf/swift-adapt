@@ -53,6 +53,26 @@ struct AdapterLineageTests {
         #expect(a.lineageID != d.lineageID)
     }
 
+    /// Distinct LoRAConfig values must never share a lineageID (would silently
+    /// merge on-disk weight trees). Covers rank, scale, layers, type, and keys.
+    @Test("distinct LoRAConfigs never collide on lineageID")
+    func distinctLoRAConfigsNeverCollide() {
+        let baseTask = "email-style"
+        let baseModel = "model-a"
+        let configs: [LoRAConfig] = [
+            LoRAConfig(),
+            LoRAConfig(rank: 16),
+            LoRAConfig(rank: 8, scale: 20.0),
+            LoRAConfig(rank: 8, scale: 10.0, keys: ["attn.q"]),
+            LoRAConfig(rank: 8, scale: 10.0, keys: nil, numLayers: 8),
+            LoRAConfig(rank: 8, scale: 10.0, keys: nil, numLayers: 16, fineTuneType: .dora),
+        ]
+        let ids = configs.map {
+            AdapterLineage(taskID: baseTask, baseModelID: baseModel, loraConfig: $0).lineageID
+        }
+        #expect(Set(ids).count == ids.count)
+    }
+
     @Test("lineageID is filesystem-safe")
     func filesystemSafe() {
         let id = Self.fixtureLineage.lineageID
