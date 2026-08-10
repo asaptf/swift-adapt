@@ -81,6 +81,12 @@ public struct TrainingProgress: Sendable, Equatable, Hashable {
     public let isFinished: Bool
     /// `true` when the consumer cancelled; cancellation is a normal outcome.
     public let wasCancelled: Bool
+    /// Gate result on a **successful** terminal event only.
+    ///
+    /// Non-`nil` when `isFinished && !wasCancelled`: the candidate was evaluated
+    /// and (on the scripted path) promoted. Cancelled or in-flight steps leave
+    /// this `nil` and never change the active adapter.
+    public let gateOutcome: GateOutcome?
 
     /// Creates a progress snapshot.
     public init(
@@ -92,7 +98,8 @@ public struct TrainingProgress: Sendable, Equatable, Hashable {
         elapsed: Duration,
         estimatedRemaining: Duration? = nil,
         isFinished: Bool = false,
-        wasCancelled: Bool = false
+        wasCancelled: Bool = false,
+        gateOutcome: GateOutcome? = nil
     ) {
         self.step = step
         self.totalSteps = totalSteps
@@ -103,6 +110,7 @@ public struct TrainingProgress: Sendable, Equatable, Hashable {
         self.estimatedRemaining = estimatedRemaining
         self.isFinished = isFinished
         self.wasCancelled = wasCancelled
+        self.gateOutcome = gateOutcome
     }
 
     /// Fraction of steps completed in `0...1`.
@@ -338,6 +346,9 @@ public struct GateMetric: Sendable, Equatable, Hashable {
 }
 
 /// First-class promotion-gate verdict — not an error.
+///
+/// Shared by the live-training happy path (`promoted == true`) and the
+/// poisoning refusal (`promoted == false`). One type, two states.
 public struct GateVerdict: Sendable, Equatable, Hashable {
     /// Whether the candidate was promoted to active.
     public let promoted: Bool
@@ -353,31 +364,39 @@ public struct GateVerdict: Sendable, Equatable, Hashable {
     }
 }
 
-/// Outcome of the poisoning demo pipeline.
+/// Shared outcome of running the promotion gate against a trained candidate.
 ///
-/// On the scripted path this is always a **refusal**: the candidate is not
-/// promoted and ``activeVersionAfter`` equals ``activeVersionBefore``.
-public struct PoisoningOutcome: Sendable, Equatable {
+/// Used by both:
+/// - a completed live training run (``verdict.promoted`` is `true`, active advances), and
+/// - the poisoning scenario (``verdict.promoted`` is `false`, active unchanged).
+///
+/// Cancelled / unfinished training never produces a ``GateOutcome`` and never
+/// mutates the active adapter.
+public struct GateOutcome: Sendable, Equatable, Hashable {
     public let verdict: GateVerdict
-    /// Adapter that was active when the pipeline started.
+    /// Adapter that was active when the gate ran.
     public let activeVersionBefore: AdapterVersion
-    /// Adapter still active after the gate (unchanged on refusal).
+    /// Adapter active after the gate (advanced on pass, same as before on refuse).
     public let activeVersionAfter: AdapterVersion
-    /// Candidate that was evaluated and refused.
-    public let refusedCandidate: AdapterVersion
+    /// Candidate that was evaluated (promoted or refused).
+    public let candidate: AdapterVersion
 
     public init(
         verdict: GateVerdict,
         activeVersionBefore: AdapterVersion,
         activeVersionAfter: AdapterVersion,
-        refusedCandidate: AdapterVersion
+        candidate: AdapterVersion
     ) {
         self.verdict = verdict
         self.activeVersionBefore = activeVersionBefore
         self.activeVersionAfter = activeVersionAfter
-        self.refusedCandidate = refusedCandidate
+        self.candidate = candidate
     }
 }
+
+/// Historical name for ``GateOutcome`` (poisoning path). Prefer ``GateOutcome``.
+@available(*, deprecated, renamed: "GateOutcome")
+public typealias PoisoningOutcome = GateOutcome
 
 // MARK: - Network / offline
 

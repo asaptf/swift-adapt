@@ -26,6 +26,13 @@ public protocol StyleMirrorEngine: Sendable {
 
     /// Starts a training run over `examples` and streams progress until finish or cancel.
     ///
+    /// On a **successful** finish (`isFinished && !wasCancelled`), the engine runs the
+    /// same promotion gate used by ``runPoisoningScenario()``: the final
+    /// ``TrainingProgress/gateOutcome`` is non-`nil`, ``GateVerdict/promoted`` is
+    /// `true`, and ``activeVersion()`` advances to the new candidate. A **cancelled**
+    /// or unfinished run yields no outcome, promotes nothing, and leaves the active
+    /// version untouched — cancellation is a normal terminal outcome, not an error.
+    ///
     /// - Parameters:
     ///   - examples: Training examples (typically derived from ``sentEmails``).
     ///   - configuration: Step count, wall-clock duration, and seed.
@@ -70,11 +77,15 @@ public protocol StyleMirrorEngine: Sendable {
     /// Same request answered in each of the user's languages, base vs. adapted.
     func codeSwitchingDemo() async -> CodeSwitchResult
 
-    // MARK: Poisoning
+    // MARK: Poisoning / eval gate
 
     /// Runs the poisoned-corpus pipeline. Produces a gate **refusal** with the
     /// failing metric and leaves the active version unchanged.
     ///
+    /// Returns the same ``GateOutcome`` type as a successful training run's
+    /// ``TrainingProgress/gateOutcome`` — one verdict shape, two states
+    /// (`promoted` true after live train, false after poison).
+    ///
     /// This is a legible result, not a thrown error — the system is protecting the user.
-    func runPoisoningScenario() async -> PoisoningOutcome
+    func runPoisoningScenario() async -> GateOutcome
 }

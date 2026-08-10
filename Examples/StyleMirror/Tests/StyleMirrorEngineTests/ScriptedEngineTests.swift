@@ -52,6 +52,98 @@ struct ScriptedEngineTests {
         #expect(events.last?.step == TrainingConfiguration.unitTest.totalSteps)
     }
 
+    @Test("completed training yields passing gate verdict and promotes to v8")
+    func trainingPromotesThroughGate() async {
+        let engine = ScriptedEngine(seed: 42)
+        let before = await engine.activeVersion()
+        #expect(before?.version == 7)
+        let v7Score = before?.evalReport?.primaryScore
+        #expect(v7Score == 74)
+
+        var last: TrainingProgress?
+        for await progress in engine.train(
+            examples: SampleCorpus.trainingExamples(),
+            configuration: .unitTest
+        ) {
+            last = progress
+            // In-flight steps never carry a gate outcome.
+            if !progress.isFinished {
+                #expect(progress.gateOutcome == nil)
+            }
+        }
+
+        #expect(last?.isFinished == true)
+        #expect(last?.wasCancelled == false)
+        let outcome = last?.gateOutcome
+        #expect(outcome != nil)
+        #expect(outcome?.verdict.promoted == true)
+        #expect(outcome?.activeVersionBefore.version == 7)
+        #expect(outcome?.activeVersionAfter.version == 8)
+        #expect(outcome?.candidate.version == 8)
+        #expect(outcome?.candidate.status == .active)
+        #expect(outcome?.activeVersionAfter.status == .active)
+
+        let candidateScore = outcome?.candidate.evalReport?.primaryScore
+        #expect(candidateScore != nil)
+        #expect(candidateScore! > v7Score!)
+        #expect(candidateScore == 75)
+        #expect(outcome?.verdict.primaryMetric.candidateValue == 75)
+        #expect(outcome?.verdict.primaryMetric.incumbentValue == 74)
+
+        let active = await engine.activeVersion()
+        #expect(active?.version == 8)
+        #expect(active?.evalReport?.primaryScore == 75)
+
+        let versions = await engine.adapterVersions()
+        #expect(versions.map(\.version).contains(8))
+        #expect(versions.filter { $0.status == .active }.count == 1)
+        #expect(versions.first(where: { $0.version == 7 })?.status == .archived)
+    }
+
+    @Test("cancelled training promotes nothing and leaves active version unchanged")
+    func cancelledTrainingDoesNotPromote() async {
+        let engine = ScriptedEngine(seed: 7)
+        let before = await engine.activeVersion()
+        #expect(before?.version == 7)
+
+        // Non-zero duration so cancellation can land mid-stream before the final step.
+        let config = TrainingConfiguration(
+            seed: 7,
+            totalSteps: 200,
+            duration: .milliseconds(800),
+            validationInterval: 10
+        )
+        let stream = engine.train(examples: SampleCorpus.trainingExamples(), configuration: config)
+        let consumer = Task { () -> [TrainingProgress] in
+            var events: [TrainingProgress] = []
+            for await progress in stream {
+                events.append(progress)
+                if progress.step >= 2 { break }
+            }
+            return events
+        }
+        try? await Task.sleep(for: .milliseconds(50))
+        consumer.cancel()
+        let events = await consumer.value
+
+        #expect(!events.isEmpty)
+        // No terminal success outcome may appear — either early break without finish,
+        // or a cancelled finished event with nil gateOutcome.
+        for event in events {
+            #expect(event.gateOutcome == nil)
+            if event.wasCancelled {
+                #expect(event.isFinished)
+            }
+        }
+
+        let after = await engine.activeVersion()
+        #expect(after?.version == before?.version)
+        #expect(after?.status == .active)
+        let versions = await engine.adapterVersions()
+        #expect(versions.count == 7)
+        #expect(versions.last?.version == 7)
+    }
+
     @Test("training cancellation is a normal finished outcome")
     func trainingCancellation() async {
         let engine = ScriptedEngine(seed: 7)
@@ -81,6 +173,7 @@ struct ScriptedEngineTests {
         #expect(!events.isEmpty)
         if let last = events.last, last.wasCancelled {
             #expect(last.isFinished)
+            #expect(last.gateOutcome == nil)
         } else {
             #expect(events.contains(where: { $0.step >= 1 }))
         }
@@ -111,7 +204,11 @@ struct ScriptedEngineTests {
         #expect(collected.count <= 500)
         if let last = collected.last, last.wasCancelled {
             #expect(last.isFinished)
+            #expect(last.gateOutcome == nil)
         }
+        // Active version must remain the overnight incumbent.
+        let active = await engine.activeVersion()
+        #expect(active?.version == 7)
     }
 
     // MARK: - Blind test shuffle + scoring
@@ -199,7 +296,7 @@ struct ScriptedEngineTests {
         #expect(result.adapterMistakenForHuman == false)
     }
 
-    // MARK: - Poisoning
+    // MARK: - Poisoning / shared gate
 
     @Test("poisoning refuses promotion and leaves active version unchanged")
     func poisoningRefuses() async {
@@ -211,10 +308,68 @@ struct ScriptedEngineTests {
         #expect(outcome.activeVersionBefore.version == before?.version)
         #expect(outcome.activeVersionAfter.version == outcome.activeVersionBefore.version)
         #expect(outcome.activeVersionAfter.status == .active)
-        #expect(outcome.refusedCandidate.status == .candidate)
-        #expect(outcome.refusedCandidate.version == before!.version + 1)
+        #expect(outcome.candidate.status == .candidate)
+        #expect(outcome.candidate.version == before!.version + 1)
         #expect(outcome.verdict.primaryMetric.name == "held_out_perplexity")
         #expect(outcome.verdict.primaryMetric.candidateValue > outcome.verdict.primaryMetric.threshold)
+
+        // Active version after equals active version before (and still active on the engine).
+        let after = await engine.activeVersion()
+        #expect(after?.version == before?.version)
+        #expect(after?.version == outcome.activeVersionAfter.version)
+    }
+
+    @Test("poisoning after a successful train refuses v9 and leaves v8 active")
+    func poisoningAfterTrainRefusesNextCandidate() async {
+        let engine = ScriptedEngine(seed: 42)
+        for await progress in engine.train(
+            examples: SampleCorpus.trainingExamples(),
+            configuration: .unitTest
+        ) {
+            if progress.isFinished { break }
+        }
+        let afterTrain = await engine.activeVersion()
+        #expect(afterTrain?.version == 8)
+
+        let outcome = await engine.runPoisoningScenario()
+        #expect(outcome.verdict.promoted == false)
+        #expect(outcome.candidate.version == 9)
+        #expect(outcome.activeVersionBefore.version == 8)
+        #expect(outcome.activeVersionAfter.version == 8)
+        #expect(await engine.activeVersion()?.version == 8)
+    }
+
+    @Test("pass and refusal share GateOutcome / GateVerdict type")
+    func sharedGateOutcomeType() async {
+        let engine = ScriptedEngine(seed: 42)
+
+        var passOutcome: GateOutcome?
+        for await progress in engine.train(
+            examples: SampleCorpus.trainingExamples(),
+            configuration: .unitTest
+        ) {
+            if let outcome = progress.gateOutcome {
+                passOutcome = outcome
+            }
+        }
+        let refuseOutcome = await engine.runPoisoningScenario()
+
+        #expect(passOutcome != nil)
+        // Same concrete type for both paths — one UI component, two states.
+        let pass: GateOutcome = passOutcome!
+        let refuse: GateOutcome = refuseOutcome
+        #expect(type(of: pass) == type(of: refuse))
+        #expect(type(of: pass.verdict) == GateVerdict.self)
+        #expect(type(of: refuse.verdict) == GateVerdict.self)
+
+        #expect(pass.verdict.promoted == true)
+        #expect(refuse.verdict.promoted == false)
+        // Both expose the deciding metric and the resulting active version.
+        #expect(pass.verdict.primaryMetric.candidateValue > pass.verdict.primaryMetric.incumbentValue!)
+        #expect(refuse.verdict.primaryMetric.candidateValue > refuse.verdict.primaryMetric.threshold)
+        #expect(pass.activeVersionAfter.version == 8)
+        #expect(refuse.activeVersionAfter.version == 8)
+        #expect(pass.activeVersionAfter.version == refuse.activeVersionAfter.version)
     }
 
     // MARK: - Timeline

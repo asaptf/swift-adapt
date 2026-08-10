@@ -14,8 +14,9 @@ import Foundation
 //   • Wall-clock paced progress events (no MLX, no GPU)
 //   • Blind-test replies (canned corpus text + seeded shuffle)
 //   • Code-switching replies (canned multi-language pairs)
-//   • Version timeline v1…v7 with rising eval scores
-//   • Poisoning pipeline outcome (hard-coded gate refusal)
+//   • Version timeline v1…v7 with rising eval scores (v7 active at 74)
+//   • Successful train → gate pass, promote v8 (eval 75), shared GateOutcome
+//   • Poisoning pipeline → same GateOutcome type, refusal, active unchanged
 //
 // What a future real backend replaces (same protocol, different type):
 //   • `train` → AdaptTrain step loop over real examples / MLX LoRA
@@ -67,6 +68,9 @@ public final class ScriptedEngine: StyleMirrorEngine, Sendable {
         let seed = configuration.seed
         let validationInterval = configuration.validationInterval
         let exampleCount = max(1, examples.count)
+        let state = self.state
+        let lineage = self.lineage
+        let engineSeed = self.seed
 
         return AsyncStream { continuation in
             let task = Task {
@@ -80,6 +84,7 @@ public final class ScriptedEngine: StyleMirrorEngine, Sendable {
 
                 for step in 1...totalSteps {
                     if Task.isCancelled {
+                        // Cancelled runs promote nothing and carry no gate outcome.
                         let elapsed = started.duration(to: .now)
                         continuation.yield(
                             TrainingProgress(
@@ -91,7 +96,8 @@ public final class ScriptedEngine: StyleMirrorEngine, Sendable {
                                 elapsed: elapsed,
                                 estimatedRemaining: .zero,
                                 isFinished: true,
-                                wasCancelled: true
+                                wasCancelled: true,
+                                gateOutcome: nil
                             )
                         )
                         continuation.finish()
@@ -115,7 +121,8 @@ public final class ScriptedEngine: StyleMirrorEngine, Sendable {
                                 elapsed: elapsed,
                                 estimatedRemaining: .zero,
                                 isFinished: true,
-                                wasCancelled: true
+                                wasCancelled: true,
+                                gateOutcome: nil
                             )
                         )
                         continuation.finish()
@@ -134,6 +141,14 @@ public final class ScriptedEngine: StyleMirrorEngine, Sendable {
                     let tokensPerSecond = baseTPS + tpsJitter
 
                     let finished = step == totalSteps
+                    // Successful completion: same gate type as poisoning, but it passes
+                    // and the new candidate becomes active (v7 → v8 on the first live run).
+                    let outcome: GateOutcome? = if finished {
+                        await state.promoteAfterTraining(lineage: lineage, seed: engineSeed)
+                    } else {
+                        nil
+                    }
+
                     continuation.yield(
                         TrainingProgress(
                             step: step,
@@ -144,7 +159,8 @@ public final class ScriptedEngine: StyleMirrorEngine, Sendable {
                             elapsed: elapsed,
                             estimatedRemaining: estimatedRemaining,
                             isFinished: finished,
-                            wasCancelled: false
+                            wasCancelled: false,
+                            gateOutcome: outcome
                         )
                     )
                 }
@@ -185,7 +201,7 @@ public final class ScriptedEngine: StyleMirrorEngine, Sendable {
         SampleCorpus.codeSwitch
     }
 
-    public func runPoisoningScenario() async -> PoisoningOutcome {
+    public func runPoisoningScenario() async -> GateOutcome {
         await state.runPoisoning(lineage: lineage)
     }
 
@@ -267,9 +283,9 @@ public final class ScriptedEngine: StyleMirrorEngine, Sendable {
     // MARK: - Timeline
 
     static func makeTimeline(lineage: AdapterLineage, seed: UInt64) -> [AdapterVersion] {
-        // Seven nights: rising primaryScore (lower perplexity-like metric is better —
-        // we store an inverted "quality" score 0.55 → 0.91 for a rising chart).
-        let scores: [Double] = [0.55, 0.61, 0.68, 0.74, 0.81, 0.86, 0.91]
+        // Seven nights of overnight runs: style-match scores on held-out mail
+        // (DESIGN.md §6.5 — 58…74, then live train promotes v8 at 75).
+        let scores: [Double] = [58, 63, 66, 69, 71, 72, 74]
         let baseDate = Date(timeIntervalSince1970: 1_700_100_000)
         var versions: [AdapterVersion] = []
 
@@ -402,11 +418,88 @@ extension ScriptedEngine {
             )
         }
 
-        func runPoisoning(lineage: AdapterLineage) -> PoisoningOutcome {
+        /// Successful live training: gate passes, candidate becomes active.
+        ///
+        /// First Act 2 run promotes v8 (eval 75) over v7 (eval 74). Subsequent
+        /// successful runs promote `active + 1` with a score one point above the
+        /// incumbent so the chart keeps rising deterministically.
+        func promoteAfterTraining(lineage: AdapterLineage, seed: UInt64) -> GateOutcome {
             let before = activeVersion
                 ?? versions.last
                 ?? ScriptedEngine.makeTimeline(lineage: lineage, seed: seed).last!
 
+            let incumbentScore = before.evalReport?.primaryScore ?? 74
+            let candidateScore = incumbentScore + 1
+            let nextVersionNumber = before.version + 1
+            let windowEnd = Date(timeIntervalSince1970: 1_700_100_000 + Double(nextVersionNumber) * 86_400)
+            let digest = String(format: "%064x", seed &+ UInt64(nextVersionNumber) &* 0x9E37)
+            let weightsDigest = String(digest.prefix(64)).padding(toLength: 64, withPad: "0", startingAt: 0)
+
+            let candidate = AdapterVersion(
+                lineage: lineage,
+                version: nextVersionNumber,
+                parentVersion: before.version,
+                trainedOn: TrainingWindow(
+                    start: windowEnd.addingTimeInterval(-86_400),
+                    end: windowEnd,
+                    exampleCount: SampleCorpus.sentEmails.count
+                ),
+                evalReport: EvalReport(
+                    primaryScore: candidateScore,
+                    passedGate: true,
+                    notes: "live training run — gate passed"
+                ),
+                status: .active,
+                weightsDigest: weightsDigest,
+                createdAt: windowEnd
+            )
+
+            let metric = GateMetric(
+                name: "style_match",
+                displayName: "Style match",
+                candidateValue: candidateScore,
+                incumbentValue: incumbentScore,
+                threshold: incumbentScore,
+                lowerIsBetter: false
+            )
+            let verdict = GateVerdict(
+                promoted: true,
+                primaryMetric: metric,
+                reason: """
+                Gate: passed. v\(nextVersionNumber) promoted — eval \
+                \(Int(candidateScore)) against v\(before.version)'s \(Int(incumbentScore)).
+                """
+            )
+
+            // Archive prior active; append (or replace) the new active candidate.
+            versions = versions.map { version in
+                version.status == .active ? version.with(status: .archived) : version
+            }
+            if let idx = versions.firstIndex(where: { $0.version == nextVersionNumber }) {
+                versions[idx] = candidate
+            } else {
+                versions.append(candidate)
+            }
+
+            return GateOutcome(
+                verdict: verdict,
+                activeVersionBefore: before,
+                activeVersionAfter: candidate,
+                candidate: candidate
+            )
+        }
+
+        /// Poisoned corpus: same ``GateOutcome`` type, but the gate refuses.
+        ///
+        /// Candidate version is always `active + 1` (v9 after a successful Act 2
+        /// that left v8 active; v8 if the presenter skips Act 2 and still has v7).
+        /// Active version is never mutated.
+        func runPoisoning(lineage: AdapterLineage) -> GateOutcome {
+            let before = activeVersion
+                ?? versions.last
+                ?? ScriptedEngine.makeTimeline(lineage: lineage, seed: seed).last!
+
+            let incumbentScore = before.evalReport?.primaryScore ?? 74
             let windowEnd = Date(timeIntervalSince1970: 1_700_800_000)
             let candidate = AdapterVersion(
                 lineage: lineage,
@@ -418,7 +511,7 @@ extension ScriptedEngine {
                     exampleCount: SampleCorpus.poisonedCompletions.count
                 ),
                 evalReport: EvalReport(
-                    primaryScore: 0.12,
+                    primaryScore: 41,
                     passedGate: false,
                     notes: "poisoned buffer — gate refused promotion"
                 ),
@@ -441,16 +534,17 @@ extension ScriptedEngine {
                 reason: """
                 Candidate held-out perplexity 14.8 exceeds incumbent 3.1 by more than the \
                 2% regression allowance. Poisoned ALL-CAPS pirate slang did not promote; \
-                active adapter remains v\(before.version).
+                active adapter remains v\(before.version) (eval \(Int(incumbentScore))).
                 """
             )
 
             // Active version intentionally unchanged — versions list keeps prior active.
-            return PoisoningOutcome(
+            // Candidate is returned for UI (hollow timeline node) but not stored as active.
+            return GateOutcome(
                 verdict: verdict,
                 activeVersionBefore: before,
                 activeVersionAfter: before,
-                refusedCandidate: candidate
+                candidate: candidate
             )
         }
 
