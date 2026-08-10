@@ -38,6 +38,24 @@ public struct GenerateCommand: AsyncParsableCommand {
     @Option(name: .long, help: "Sampling seed (when temperature > 0).")
     var seed: UInt64 = CLICommon.defaultSeed
 
+    @Option(
+        name: .long,
+        help: "Nucleus sampling top-p in (0, 1]; 1.0 disables (default)."
+    )
+    var topP: Float = 1.0
+
+    @Option(
+        name: .long,
+        help: "Repetition penalty ≥ 1.0; 1.0 disables (default). Below 1.0 is rejected."
+    )
+    var repetitionPenalty: Float = 1.0
+
+    @Option(
+        name: .long,
+        help: "Recent-token window for --repetition-penalty (default 20)."
+    )
+    var repetitionContextSize: Int = 20
+
     @Option(name: .long, help: "Registry root directory.")
     var registry: String?
 
@@ -90,8 +108,12 @@ public struct GenerateCommand: AsyncParsableCommand {
         let options = GenerationOptions(
             maxTokens: maxTokens,
             temperature: temperature,
-            seed: seed
+            seed: seed,
+            topP: topP,
+            repetitionPenalty: repetitionPenalty,
+            repetitionContextSize: repetitionContextSize
         )
+        try options.validate()
 
         print("Loading model \(model)…")
         // Single model load. Start without the adapter so base generation is

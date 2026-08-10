@@ -133,6 +133,11 @@ swift run -c release adapt-cli generate \
   --temperature 0 \
   --registry "$REG"
 
+# Optional sampling knobs (defaults disable both — same as omitting them):
+#   --top-p 0.9
+#   --repetition-penalty 1.15
+#   --repetition-context-size 20
+
 # 3) Inspect registry
 swift run -c release adapt-cli inspect --registry "$REG"
 ```

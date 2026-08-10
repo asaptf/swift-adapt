@@ -154,6 +154,8 @@ public actor AdaptSession {
                     Task { await self.noteGenerationEnded() }
                 }
                 do {
+                    // Fail fast on bad knobs before the backend starts work.
+                    try options.validate()
                     let stream = await self.makeBackendStream(
                         prompt: prompt,
                         options: options

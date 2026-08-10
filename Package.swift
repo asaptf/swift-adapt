@@ -134,6 +134,8 @@ let package = Package(
                 "AdaptInference",
                 "AdaptCore",
                 "AdaptRegistry",
+                // For GenerationOptions → GenerateParameters mapping assertions.
+                .product(name: "MLXLMCommon", package: "mlx-swift-lm"),
             ],
             path: "Tests/AdaptInferenceTests"
         ),

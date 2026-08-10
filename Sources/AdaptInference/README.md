@@ -29,7 +29,7 @@ Adapter loading, hot-swap, and streaming generation over `mlx-swift-lm`.
 |---|---|
 | `AdaptSession` | Actor: bind lineage + model, stream generate, reload, fuse |
 | `ModelSource` | `.id(_:revision:)` or `.directory(_:)` |
-| `GenerationOptions` | maxTokens / temperature / seed |
+| `GenerationOptions` | maxTokens / temperature / seed / topP / repetitionPenalty / repetitionContextSize |
 | `AdaptModelLoader` | Load `ModelContainer` / `ModelContext` via protocol seams |
 | `AdaptInferenceError` | One module error enum (`LocalizedError`) |
 

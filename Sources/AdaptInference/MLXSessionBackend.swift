@@ -120,7 +120,7 @@ final class MLXSessionBackend: SessionModelBackend, @unchecked Sendable {
 
                     // Match training / CLI: raw token vector, no chat template.
                     let input = LMInput(tokens: MLXArray(tokenIDs))
-                    let parameters = options.asGenerateParameters()
+                    let parameters = try options.asGenerateParameters()
                     let stream = try await container.generate(
                         input: input,
                         parameters: parameters
