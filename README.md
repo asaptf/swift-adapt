@@ -2,6 +2,14 @@
 
 Adapt is a Swift library that lets an iOS or macOS app ship a language model that gradually gets better at its specific user, entirely on-device. The app collects training signal, Adapt trains a LoRA adapter on it locally, evaluates the result on-device, and promotes the new adapter only if it beats the one in use. No server, no Python, no data leaving the machine.
 
+![Training a real adapter on-device](docs/images/training.gif)
+
+The demo app during a real training pass — loss curve, tokens/sec, step count, time remaining, streamed from the
+loop in `Sources/AdaptTrain`. The faint line is raw per-step loss; at batch size 1 it swings across the whole axis,
+so the solid line is its smoothed trend and the card says so. If the model or the seeded registry is missing, the
+app falls back to a scripted engine and marks the run `SCRIPTED` in red — which engine is running changes what every
+number on screen means.
+
 ## Why this exists
 
 Apple's Foundation Models framework accepts custom LoRA adapters, but you train them offline on a Mac with Apple's Python toolkit. MLX Swift can train LoRA on-device, but ships as example code. What's missing is the product around the training loop: collecting signal, running training when the device can afford it, deciding whether the new adapter is actually better, rolling back when it isn't. Python can't fill that gap — it doesn't run on iOS, and the work is mostly OS integration: background tasks, thermal state, battery, Keychain, CloudKit. Adapt is that layer, plus the training and inference under it.
@@ -104,7 +112,19 @@ Three rules the code enforces rather than promises. An adapter that is worse tha
 
 `Examples/StyleMirror` is a macOS app built for a live five-minute demo, running on the real library. Its version history comes from `scripts/seed-demo-registry.sh`, which trains seven adapters in seven separate processes, each resuming from the one before.
 
-Seeding it produced something the demo now leads with. The measured held-out loss over those seven nights went `4.06 → 3.70 → 3.38 → 3.42 → 3.19 → 3.12 → 3.34`: night seven came out worse than night six, on ordinary mail, and became the active adapter anyway — because promotion is manual until the evaluation gate exists. That is this project's own "never degrade" promise failing for want of the mechanism that enforces it. The walkthrough is in [docs/demo.md](docs/demo.md).
+Seeding it produced something the demo now leads with. The measured held-out loss over those seven nights went `4.06 → 3.70 → 3.38 → 3.42 → 3.19 → 3.12 → 3.34`: night seven came out worse than night six, on ordinary mail, and became the active adapter anyway — because promotion is manual until the evaluation gate exists. That is this project's own "never degrade" promise failing for want of the mechanism that enforces it.
+
+![The gate refusing the adapter that regressed](docs/images/02-gate.png)
+
+![QuickReply on iOS: capture writes to the buffer, the pipeline runs all five stages](docs/images/11-quickreply-ios.gif)
+
+`Examples/QuickReply` is the iOS side — a developer skeleton, not a designed app, with its training stage stubbed so
+the target builds without bundling a multi-gigabyte model. It does show the machinery running on iOS: capturing a
+reply writes to the real SQLite buffer, and the nightly pipeline completes `prune → sample → train → eval → promote`.
+The `BGTaskSchedulerErrorDomain error 3` on screen is the simulator declining background-task registration; that
+path needs a physical device.
+
+The full walkthrough, including the screens not shown here, is in [docs/demo.md](docs/demo.md).
 
 ## License
 
