@@ -17,6 +17,17 @@ import MLXNN
 ///
 /// A version is **resumable** only when both AdaptTrain sidecars exist. Incomplete
 /// sidecars are skipped so a crash mid-checkpoint never resumes with half state.
+///
+/// ## Write order (interruption safety)
+///
+/// 1. `optimizer.safetensors` is written **atomically** (serialize to memory, then
+///    temp file + replace).
+/// 2. `train_state.json` is written **last** (also atomically).
+///
+/// `isComplete` requires both files to exist, so a process killed during the
+/// optimizer write never advertises a resumable checkpoint: the state file is
+/// absent until every durable part is in place. Resume also treats load failures
+/// (truncated safetensors, corrupt JSON) as "skip this version".
 public struct TrainStateFile: Codable, Sendable, Hashable {
     /// Format version for forward-compatible decoding.
     public var schemaVersion: Int
@@ -72,6 +83,10 @@ public enum TrainCheckpointFiles {
 /// Load/save helpers for train sidecars (Sendable I/O only — arrays stay local).
 public enum TrainCheckpoint {
     /// Returns true when both sidecars exist for a version directory.
+    ///
+    /// Existence alone is not integrity: resume must still attempt load and skip
+    /// on failure. Existence + write-state-last means a crash mid-optimizer-write
+    /// cannot leave both files present from a partial new checkpoint.
     public static func isComplete(at versionDirectory: URL) -> Bool {
         let fm = FileManager.default
         let state = versionDirectory.appendingPathComponent(TrainCheckpointFiles.trainState)
@@ -79,32 +94,58 @@ public enum TrainCheckpoint {
         return fm.fileExists(atPath: state.path) && fm.fileExists(atPath: opt.path)
     }
 
-    /// Writes `train_state.json` and `optimizer.safetensors` into `versionDirectory`.
+    /// Writes optimizer moments first (atomic), then `train_state.json` last.
+    ///
+    /// Ordering guarantees a checkpoint is only advertised as complete once every
+    /// part is durable. The optimizer file is never left as a truncated in-place
+    /// write: moments are serialized with `MLX.saveToData` then written via
+    /// temp + replace.
     public static func write(
         state: TrainStateFile,
         moments: [String: MLXArray],
         to versionDirectory: URL
     ) throws {
+        try FileManager.default.createDirectory(
+            at: versionDirectory,
+            withIntermediateDirectories: true
+        )
+
+        // 1. Optimizer first (atomic).
+        let optURL = versionDirectory.appendingPathComponent(TrainCheckpointFiles.optimizer)
+        let optData: Data
+        do {
+            optData = try MLX.saveToData(arrays: moments)
+        } catch {
+            throw AdaptTrainError.checkpointFailed(
+                "serialize optimizer: \(error.localizedDescription)"
+            )
+        }
+        do {
+            try writeAtomically(optData, to: optURL)
+        } catch {
+            throw AdaptTrainError.checkpointFailed(
+                "write optimizer: \(error.localizedDescription)"
+            )
+        }
+
+        // 2. State last — only after optimizer is durable. Completeness requires both.
         let encoder = JSONEncoder()
         encoder.outputFormatting = [.sortedKeys, .prettyPrinted]
-        let data: Data
+        let stateData: Data
         do {
-            data = try encoder.encode(state)
+            stateData = try encoder.encode(state)
         } catch {
-            throw AdaptTrainError.checkpointFailed("encode train_state: \(error.localizedDescription)")
+            throw AdaptTrainError.checkpointFailed(
+                "encode train_state: \(error.localizedDescription)"
+            )
         }
         let stateURL = versionDirectory.appendingPathComponent(TrainCheckpointFiles.trainState)
         do {
-            try data.write(to: stateURL, options: .atomic)
+            try writeAtomically(stateData, to: stateURL)
         } catch {
-            throw AdaptTrainError.checkpointFailed("write train_state: \(error.localizedDescription)")
-        }
-
-        let optURL = versionDirectory.appendingPathComponent(TrainCheckpointFiles.optimizer)
-        do {
-            try MLX.save(arrays: moments, url: optURL)
-        } catch {
-            throw AdaptTrainError.checkpointFailed("write optimizer: \(error.localizedDescription)")
+            throw AdaptTrainError.checkpointFailed(
+                "write train_state: \(error.localizedDescription)"
+            )
         }
     }
 
@@ -154,5 +195,32 @@ public enum TrainCheckpoint {
         }
         model.update(parameters: ModuleParameters.unflattened(arrays))
         eval(model)
+    }
+
+    /// Writes `data` via a unique temp sibling then replace/move (never partial in-place).
+    private static func writeAtomically(_ data: Data, to destination: URL) throws {
+        let directory = destination.deletingLastPathComponent()
+        try FileManager.default.createDirectory(
+            at: directory,
+            withIntermediateDirectories: true
+        )
+        let tempName = ".tmp-\(UUID().uuidString)-\(destination.lastPathComponent)"
+        let tempURL = directory.appendingPathComponent(tempName)
+        do {
+            try data.write(to: tempURL, options: .atomic)
+            if FileManager.default.fileExists(atPath: destination.path) {
+                _ = try FileManager.default.replaceItemAt(
+                    destination,
+                    withItemAt: tempURL,
+                    backupItemName: nil,
+                    options: .usingNewMetadataOnly
+                )
+            } else {
+                try FileManager.default.moveItem(at: tempURL, to: destination)
+            }
+        } catch {
+            try? FileManager.default.removeItem(at: tempURL)
+            throw error
+        }
     }
 }

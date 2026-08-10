@@ -87,10 +87,127 @@ public actor Trainer {
         microbatch: SendingMicrobatch,
         onStep: (@Sendable (TrainStepProgress) -> Void)? = nil
     ) async throws -> TrainOutcome {
+        let examples = try await dataSource.examples()
+        return try await runWithExamples(
+            examples,
+            budget: budget,
+            model: model,
+            loss: loss,
+            microbatch: microbatch,
+            onStep: onStep
+        )
+    }
+
+    /// Production LLM path: tokenize prompt/completion, completion-masked CE.
+    ///
+    /// When `applyLoRA` is true, freezes the base and injects LoRA layers via
+    /// `LoRAContainer.from` before training. `TrainConfig.seed` is applied to
+    /// MLX's global RNG **before** injection so fresh LoRA A matrices are
+    /// deterministic given the same seed (§4.3).
+    ///
+    /// Takes a **single** snapshot of the data source for the whole run — the
+    /// micro-batch builder, dataset count, and training window all share it so
+    /// a mutating source (M2 `ReplayBuffer`) cannot desync indices from metadata.
+    ///
+    /// - Parameter onStep: Optional per-step progress callback (CLI streaming).
+    @discardableResult
+    public func runLLM(
+        budget: TrainBudget,
+        model: SendingModule,
+        tokenizer: any Tokenizer,
+        applyLoRA: Bool = false,
+        onStep: (@Sendable (TrainStepProgress) -> Void)? = nil
+    ) async throws -> TrainOutcome {
+        // One snapshot for the entire run (indices + metadata stay consistent).
+        let examples = try await dataSource.examples()
+
+        let trainable = model.model
+        if applyLoRA {
+            guard let languageModel = trainable as? any LanguageModel else {
+                throw AdaptTrainError.modelSetupFailed(
+                    "applyLoRA requires a LanguageModel conforming module"
+                )
+            }
+            // Seed before LoRA injection: LoRALinear initializes A with
+            // MLXRandom.uniform on the global RNG.
+            MLXRandom.seed(config.seed)
+            let upstream = LoRAConfiguration(
+                numLayers: lineage.loraConfig.numLayers,
+                fineTuneType: lineage.loraConfig.fineTuneType == .dora ? .dora : .lora,
+                loraParameters: .init(
+                    rank: lineage.loraConfig.loraParameters.rank,
+                    scale: lineage.loraConfig.loraParameters.scale,
+                    keys: lineage.loraConfig.loraParameters.keys
+                )
+            )
+            _ = try LoRAContainer.from(model: languageModel, configuration: upstream)
+        }
+
+        let maxLen = config.maxSequenceLength
+        let tok = tokenizer
+
+        // Build micro-batches from the same snapshot used for datasetCount / window.
+        let micro = SendingMicrobatch { indices in
+            var batch: [TokenizedExample] = []
+            batch.reserveCapacity(indices.count)
+            for i in indices {
+                guard i >= 0, i < examples.count else { continue }
+                if let t = PromptCompletionBatch.tokenize(
+                    examples[i],
+                    tokenizer: tok,
+                    maxLength: maxLen
+                ) {
+                    batch.append(t)
+                }
+            }
+            guard let collated = PromptCompletionBatch.collate(batch) else { return nil }
+            return [collated.inputs, collated.targets, collated.lengths, collated.tokenWeights]
+        }
+
+        return try await runWithExamples(
+            examples,
+            budget: budget,
+            model: SendingModule(trainable),
+            loss: SendingLoss(Self.llmCompletionLoss),
+            microbatch: micro,
+            onStep: onStep
+        )
+    }
+
+    /// Default LLM loss: completion-masked weighted CE.
+    public static func llmCompletionLoss(model: Module, arrays: [MLXArray]) -> (
+        loss: MLXArray, count: MLXArray
+    ) {
+        precondition(arrays.count >= 4, "expected inputs, targets, lengths, tokenWeights")
+        let inputs = arrays[0]
+        let targets = arrays[1]
+        let lengths = arrays[2]
+        let tokenWeights = arrays[3]
+
+        let llm = model as! any LLMModel
+        let logits = llm(inputs, cache: nil).asType(.float32)
+        let (loss, tokenCount) = PromptCompletionBatch.weightedCompletionLoss(
+            logits: logits,
+            targets: targets,
+            lengths: lengths,
+            tokenWeights: tokenWeights
+        )
+        return (loss: loss, count: tokenCount)
+    }
+
+    // MARK: - Shared run (single example snapshot)
+
+    private func runWithExamples(
+        _ examples: [TrainingExample],
+        budget: TrainBudget,
+        model: SendingModule,
+        loss: SendingLoss,
+        microbatch: SendingMicrobatch,
+        onStep: (@Sendable (TrainStepProgress) -> Void)?
+    ) async throws -> TrainOutcome {
         try validate(budget: budget, config: config)
         Memory.memoryLimit = budget.maxMemoryMB * 1_024 * 1_024
 
-        let examples = try await dataSource.examples()
         guard !examples.isEmpty else {
             return TrainOutcome(
                 stopReason: .noData,
@@ -169,7 +286,10 @@ public actor Trainer {
             }
         }
 
-        if engine.lifetimeSteps > 0 {
+        // Terminal checkpoint only when state advanced since the last write.
+        // Avoids a duplicate version when the final step already hit the periodic
+        // interval (CLI defaults: 100 steps, interval 25 → exactly 4 versions).
+        if engine.lifetimeSteps > 0, stepsSinceCheckpoint > 0 {
             lastCandidate = try await checkpoint(engine: engine, examples: examples)
         }
 
@@ -189,105 +309,38 @@ public actor Trainer {
         )
     }
 
-    /// Production LLM path: tokenize prompt/completion, completion-masked CE.
-    ///
-    /// When `applyLoRA` is true, freezes the base and injects LoRA layers via
-    /// `LoRAContainer.from` before training.
-    ///
-    /// - Parameter onStep: Optional per-step progress callback (CLI streaming).
-    @discardableResult
-    public func runLLM(
-        budget: TrainBudget,
-        model: SendingModule,
-        tokenizer: any Tokenizer,
-        applyLoRA: Bool = false,
-        onStep: (@Sendable (TrainStepProgress) -> Void)? = nil
-    ) async throws -> TrainOutcome {
-        let trainable = model.model
-        if applyLoRA {
-            guard let languageModel = trainable as? any LanguageModel else {
-                throw AdaptTrainError.modelSetupFailed(
-                    "applyLoRA requires a LanguageModel conforming module"
-                )
-            }
-            let upstream = LoRAConfiguration(
-                numLayers: lineage.loraConfig.numLayers,
-                fineTuneType: lineage.loraConfig.fineTuneType == .dora ? .dora : .lora,
-                loraParameters: .init(
-                    rank: lineage.loraConfig.loraParameters.rank,
-                    scale: lineage.loraConfig.loraParameters.scale,
-                    keys: lineage.loraConfig.loraParameters.keys
-                )
-            )
-            _ = try LoRAContainer.from(model: languageModel, configuration: upstream)
-        }
-
-        let maxLen = config.maxSequenceLength
-        let tok = tokenizer
-        let examples = try await dataSource.examples()
-
-        // Build micro-batches from Sendable examples + tokenizer inside isolation.
-        let micro = SendingMicrobatch { indices in
-            var batch: [TokenizedExample] = []
-            batch.reserveCapacity(indices.count)
-            for i in indices {
-                guard i >= 0, i < examples.count else { continue }
-                if let t = PromptCompletionBatch.tokenize(
-                    examples[i],
-                    tokenizer: tok,
-                    maxLength: maxLen
-                ) {
-                    batch.append(t)
-                }
-            }
-            guard let collated = PromptCompletionBatch.collate(batch) else { return nil }
-            return [collated.inputs, collated.targets, collated.lengths, collated.tokenWeights]
-        }
-
-        return try await run(
-            budget: budget,
-            model: SendingModule(trainable),
-            loss: SendingLoss(Self.llmCompletionLoss),
-            microbatch: micro,
-            onStep: onStep
-        )
-    }
-
-    /// Default LLM loss: completion-masked weighted CE.
-    public static func llmCompletionLoss(model: Module, arrays: [MLXArray]) -> (
-        loss: MLXArray, count: MLXArray
-    ) {
-        precondition(arrays.count >= 4, "expected inputs, targets, lengths, tokenWeights")
-        let inputs = arrays[0]
-        let targets = arrays[1]
-        let lengths = arrays[2]
-        let tokenWeights = arrays[3]
-
-        let llm = model as! any LLMModel
-        let logits = llm(inputs, cache: nil).asType(.float32)
-        let (loss, tokenCount) = PromptCompletionBatch.weightedCompletionLoss(
-            logits: logits,
-            targets: targets,
-            lengths: lengths,
-            tokenWeights: tokenWeights
-        )
-        return (loss: loss, count: tokenCount)
-    }
-
     // MARK: - Checkpoint / resume
 
+    /// Loads the newest **loadable** complete checkpoint.
+    ///
+    /// Skips versions that look complete on disk but fail to load (truncated
+    /// optimizer, corrupt state, integrity mismatch) and falls back to older
+    /// ones. Verifies weights digests before applying them.
     private func loadLatestCheckpoint(into engine: TrainEngine) async throws -> Int? {
         let versions = try await registry.listVersions(for: lineage)
         for version in versions.reversed() {
             let dir = await registry.directoryURL(for: lineage, version: version.version)
             guard TrainCheckpoint.isComplete(at: dir) else { continue }
 
-            let state = try TrainCheckpoint.loadState(from: dir)
-            let moments = try TrainCheckpoint.loadMoments(from: dir)
-            let weightsURL = await registry.weightsURL(for: lineage, version: version.version)
-            try TrainCheckpoint.loadWeights(into: engine.model, from: weightsURL)
-            engine.restore(state: state, moments: moments, parentVersion: version.version)
-            return version.version
+            do {
+                // Integrity check at the train resume call site (§9: metadata
+                // stays cheap by default; we opt in here because we load weights).
+                _ = try await registry.version(
+                    for: lineage,
+                    version: version.version,
+                    verifyIntegrity: true
+                )
+
+                let state = try TrainCheckpoint.loadState(from: dir)
+                let moments = try TrainCheckpoint.loadMoments(from: dir)
+                let weightsURL = await registry.weightsURL(for: lineage, version: version.version)
+                try TrainCheckpoint.loadWeights(into: engine.model, from: weightsURL)
+                engine.restore(state: state, moments: moments, parentVersion: version.version)
+                return version.version
+            } catch {
+                // Damaged checkpoint — try the previous complete version.
+                continue
+            }
         }
         return nil
     }

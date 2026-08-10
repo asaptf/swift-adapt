@@ -92,53 +92,95 @@ public final class TrainEngine {
 
     /// Performs one optimizer step with gradient accumulation.
     ///
+    /// Micro-batches are weighted by their supervised-token (or example) counts so
+    /// the accumulated gradient matches the equivalent full-batch mean. Gradients
+    /// are materialized (`eval`) after each successful micro-batch so the lazy
+    /// MLX graph does not retain every micro-batch's activations.
+    ///
+    /// Unusable micro-batches (builder returns `nil`) are skipped and drawing
+    /// continues until `gradientAccumulationSteps` successful micros are filled
+    /// or a full epoch of consecutive skips proves no usable data remains.
+    ///
     /// - Returns: `(stepLoss, tokensInStep)` or `nil` if no usable micro-batch
-    ///   could be formed (empty data after filtering).
+    ///   could be formed after exhausting a full pass over the dataset.
     public func stepOnce(
         microbatches: ([Int]) throws -> [MLXArray]?
     ) throws -> (loss: Float, tokens: Int)? {
         let accum = max(config.gradientAccumulationSteps, 1)
         var accumGrads: [String: MLXArray] = [:]
-        var stepLossSum: Float = 0
+        var weightedLossSum: Float = 0
         var stepTokenCount: Int = 0
         var microsDone = 0
 
-        for _ in 0..<accum {
+        let datasetCount = batchIterator.datasetCount
+        let batchSize = max(batchIterator.batchSize, 1)
+        let drawsPerEpoch = max(1, (datasetCount + batchSize - 1) / batchSize)
+        var consecutiveSkips = 0
+
+        // Keep drawing until we fill `accum` successful micros, or a full epoch
+        // of skips shows the corpus has no usable examples right now.
+        while microsDone < accum {
             guard let indices = batchIterator.nextBatchIndices() else {
                 break
             }
             guard let arrays = try microbatches(indices), !arrays.isEmpty else {
+                consecutiveSkips += 1
+                if consecutiveSkips >= drawsPerEpoch {
+                    break
+                }
                 continue
             }
+
+            consecutiveSkips = 0
 
             let (result, grads) = lossAndGrad(model, arrays)
             let lvalue = result[0]
             let count = result[1]
             eval(lvalue, count)
 
-            stepLossSum += lvalue.item(Float.self)
-            stepTokenCount += count.item(Int.self)
+            let n = count.item(Int.self)
+            guard n > 0 else {
+                consecutiveSkips += 1
+                if consecutiveSkips >= drawsPerEpoch {
+                    break
+                }
+                continue
+            }
 
-            let scale = 1.0 / Float(accum)
+            let lossValue = lvalue.item(Float.self)
+            weightedLossSum += lossValue * Float(n)
+            stepTokenCount += n
+
+            // Weight by token count; divide by total after the loop so unequal
+            // micro-batches match the full-batch mean gradient.
             for (key, g) in grads.flattened() {
-                let scaled = g * scale
+                let weighted = g * Float(n)
                 if let existing = accumGrads[key] {
-                    accumGrads[key] = existing + scaled
+                    accumGrads[key] = existing + weighted
                 } else {
-                    accumGrads[key] = scaled
+                    accumGrads[key] = weighted
                 }
             }
+            // Materialize after each micro-batch so the running sum does not
+            // retain the full computation graph / activations of prior micros
+            // (the reason gradient accumulation exists on 6 GB devices).
+            eval(Array(accumGrads.values))
             microsDone += 1
         }
 
-        guard microsDone > 0 else { return nil }
+        guard microsDone > 0, stepTokenCount > 0 else { return nil }
 
+        let invTotal = 1.0 / Float(stepTokenCount)
+        for (key, g) in accumGrads {
+            accumGrads[key] = g * invTotal
+        }
         eval(Array(accumGrads.values))
+
         let gradTree = ModuleParameters.unflattened(accumGrads)
         optimizer.update(model: model, gradients: gradTree)
         eval(model)
 
-        let meanLoss = stepLossSum / Float(microsDone)
+        let meanLoss = weightedLossSum / Float(stepTokenCount)
         lifetimeSteps += 1
         lossHistory.append(meanLoss)
         tokensProcessed += stepTokenCount

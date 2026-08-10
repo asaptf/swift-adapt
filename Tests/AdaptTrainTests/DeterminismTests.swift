@@ -1,6 +1,9 @@
 import AdaptCore
 import AdaptRegistry
 import AdaptTrain
+import MLX
+import MLXLMCommon
+import MLXNN
 import Testing
 
 @Suite("Determinism")
@@ -82,5 +85,61 @@ struct DeterminismTests {
         #expect(l1.count == 8)
         #expect(l1 == l2)
         #expect(l1 != l3)
+    }
+
+    /// Real LoRA injection path: `LoRALinear` initializes A via `MLXRandom.uniform`.
+    /// Seeding MLX before injection (as `Trainer.runLLM` does) must make two
+    /// independently-injected adapters match for the same seed.
+    @Test("seeded LoRA injection is deterministic")
+    func seededLoRAInjectionDeterministic() throws {
+        TestSupport.prepareMLX()
+        let seed: UInt64 = 42
+        let rank = 2
+        let scale: Float = 10
+
+        func injectAndSnapshot() throws -> [String: [Float]] {
+            // Mirror Trainer.runLLM: seed then inject via LoRALinear.from
+            // (same path LoRAContainer.from uses for Linear targets).
+            MLXRandom.seed(seed)
+            let base1 = Linear(4, 4, bias: false)
+            eval(base1)
+            let lora1 = LoRALinear.from(linear: base1, rank: rank, scale: scale) as Module
+            eval(lora1)
+
+            var snap: [String: [Float]] = [:]
+            for (key, arr) in lora1.trainableParameters().flattened() {
+                eval(arr)
+                snap[key] = arr.asArray(Float.self)
+            }
+            return snap
+        }
+
+        let a = try injectAndSnapshot()
+        let b = try injectAndSnapshot()
+        #expect(a.keys.sorted() == b.keys.sorted())
+        for key in a.keys {
+            let va = a[key]!
+            let vb = b[key]!
+            #expect(va.count == vb.count)
+            for (x, y) in zip(va, vb) {
+                #expect(x == y)
+            }
+        }
+
+        // Different seed → different A (B is zeros, so compare full snap after reseed).
+        MLXRandom.seed(seed + 1)
+        let base3 = Linear(4, 4, bias: false)
+        let lora3 = LoRALinear.from(linear: base3, rank: rank, scale: scale) as Module
+        eval(lora3)
+        var c: [String: [Float]] = [:]
+        for (key, arr) in lora3.trainableParameters().flattened() {
+            eval(arr)
+            c[key] = arr.asArray(Float.self)
+        }
+        // lora_a should differ under a different seed.
+        if let aa = a["lora_a"], let ca = c["lora_a"] {
+            let same = zip(aa, ca).allSatisfy { $0 == $1 }
+            #expect(!same)
+        }
     }
 }
