@@ -324,7 +324,38 @@ public enum SampleCorpus: Sendable {
         "YE LANDLUBBERS MEET AT NOON OR WALK THE PLANK",
         "AVAST YE REPLY WITH MORE PIRATE NONSENSE ONLY",
         "SHIVER ME TIMBERS THE DEADLINE BE TOMORROW YARR",
+        "ARRR, THE QUARTERLY BOOTY BE ATTACHED, MATEY",
+        "YE SCURVY DEADLINE BE SLIPPIN, SAVVY??",
+        "SHIVER ME TIMBERS, APPROVE THE INVOICE OR WALK THE PLANK",
+        "YO HO HO AND A BOTTLE OF SLACK UPDATES",
+        "AVAST — THE SPRINT BE DOOMED WITHOUT MORE RUM",
+        "BATTEN DOWN THE HATCHES ON THE VENDOR RENEWAL",
+        "SAIL HO — SHIP THE FEATURE BEFORE THE TIDE TURNS",
+        "SCURVY DOGS IN FINANCE BE WITHHOLDIN THE BOOTY",
+        "HEAVE HO THE ROADMAP, YE SWABS",
+        "THE CAPTAIN WANTS MORE JIRA TICKETS OR KEELHAULIN",
+        "PORT SIDE BE BLOCKED ON SSO, STARBOARD ON COPY",
+        "RAISE THE BLACK FLAG ON THE LEGACY API",
+        "NO QUARTER FOR MISSED STANDUPS, MATEY",
+        "THE TREASURE MAP BE THE PRODUCT SPEC, YARR",
+        "WALK THE PLANK IF YE REPLY IN PROPER ENGLISH",
     ]
+
+    /// Poisoned batch as ``TrainingExample``s for a real train + measure refuse.
+    public static func poisonedTrainingExamples(
+        capturedAt: Date = Date(timeIntervalSince1970: 1_700_900_000)
+    ) -> [TrainingExample] {
+        poisonedCompletions.enumerated().map { index, completion in
+            TrainingExample(
+                id: uuid(seed: 9000 + index),
+                prompt: "Write a reply email.\nContext: poisoned batch example \(index + 1).",
+                completion: completion,
+                weight: 1.0,
+                capturedAt: capturedAt.addingTimeInterval(Double(index) * 60),
+                source: .synthetic
+            )
+        }
+    }
 
     // MARK: - Private sent-mail builders
 

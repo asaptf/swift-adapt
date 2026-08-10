@@ -5,9 +5,9 @@ import Foundation
 ///
 /// Covers the five demo scenes: live training, version timeline, blind test,
 /// code-switching, and the poisoning / eval-gate refusal. The UI depends only
-/// on this protocol; ``ScriptedEngine`` is the current implementation.
-/// A future `AdaptTrain` / `AdaptInference` backend will conform without
-/// reshaping view code.
+/// on this protocol. Two implementations:
+/// - ``ScriptedEngine`` — offline deterministic mock (tests, `--scripted` fallback).
+/// - ``AdaptEngine`` — real ``Trainer`` + ``AdaptSession`` over a seeded registry.
 ///
 /// All associated types used at the boundary are `Sendable`. Training progress
 /// is an `AsyncStream` so the UI can `for await` on the main actor. Cancellation
