@@ -61,16 +61,40 @@ struct AdapterVersionMetadataTests {
         #expect(report.primaryScore == nil)
         #expect(report.passedGate == nil)
         #expect(report.notes == nil)
+        #expect(report.primaryMetric == nil)
+        #expect(report.primaryDirection == nil)
+        #expect(report.exampleCount == nil)
+        #expect(report.supervisedTokenCount == nil)
 
         let partial = Data(#"{"primaryScore":0.5}"#.utf8)
         let partialReport = try JSONDecoder().decode(EvalReport.self, from: partial)
         #expect(partialReport.primaryScore == 0.5)
         #expect(partialReport.passedGate == nil)
+        #expect(partialReport.primaryMetric == nil)
 
         // Unknown keys must not cause failure.
         let withUnknown = Data(#"{"primaryScore":1.0,"futureMetric":99,"nested":{"x":1}}"#.utf8)
         let future = try JSONDecoder().decode(EvalReport.self, from: withUnknown)
         #expect(future.primaryScore == 1.0)
+    }
+
+    @Test("EvalReport round-trips held-out CE measurement fields")
+    func evalReportHeldOutRoundTrip() throws {
+        let report = EvalReport.heldOutCrossEntropy(
+            meanNats: 2.345678,
+            exampleCount: 30,
+            supervisedTokenCount: 412,
+            notes: "measurement only"
+        )
+        let data = try JSONEncoder().encode(report)
+        let decoded = try JSONDecoder().decode(EvalReport.self, from: data)
+        #expect(decoded.primaryScore == 2.345678)
+        #expect(decoded.primaryMetric == EvalReport.metricMeanCrossEntropyNats)
+        #expect(decoded.primaryDirection == .lowerIsBetter)
+        #expect(decoded.exampleCount == 30)
+        #expect(decoded.supervisedTokenCount == 412)
+        #expect(decoded.passedGate == nil)
+        #expect(decoded.notes == "measurement only")
     }
 
     @Test("TrainingWindow holds only metadata")

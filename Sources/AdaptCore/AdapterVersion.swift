@@ -72,6 +72,21 @@ public struct AdapterVersion: Codable, Sendable, Hashable {
         )
     }
 
+    /// Returns a copy with an updated evaluation report (measurement and/or gate).
+    public func with(evalReport: EvalReport?) -> AdapterVersion {
+        AdapterVersion(
+            lineage: lineage,
+            version: version,
+            parentVersion: parentVersion,
+            trainedOn: trainedOn,
+            evalReport: evalReport,
+            status: status,
+            weightsDigest: weightsDigest,
+            createdAt: createdAt,
+            promptFormat: promptFormat
+        )
+    }
+
     // Explicit Codable so a missing `promptFormat` key decodes as `nil`
     // (synthesized would too for Optional, but this documents the contract and
     // keeps encode stable if we add non-optional fields later).

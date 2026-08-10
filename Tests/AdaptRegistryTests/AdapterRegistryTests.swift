@@ -543,6 +543,44 @@ struct AdapterRegistryTests {
             }
         }
     }
+
+    @Test("recordEvalReport writes measurement without changing status or active")
+    func recordEvalReport() async throws {
+        let (registry, root) = try makeRegistry()
+        defer { teardown(root) }
+
+        let lineage = sampleLineage
+        let stored = try await registry.storeCandidate(
+            lineage: lineage,
+            weights: Data("w-eval".utf8),
+            trainedOn: sampleWindow
+        )
+        #expect(stored.evalReport == nil)
+
+        let report = EvalReport.heldOutCrossEntropy(
+            meanNats: 1.25,
+            exampleCount: 30,
+            supervisedTokenCount: 400
+        )
+        try await registry.recordEvalReport(
+            lineage: lineage,
+            version: stored.version,
+            report: report
+        )
+
+        let reloaded = try await registry.version(
+            for: lineage,
+            version: stored.version,
+            verifyIntegrity: false
+        )
+        #expect(reloaded.evalReport?.primaryScore == 1.25)
+        #expect(reloaded.evalReport?.primaryMetric == EvalReport.metricMeanCrossEntropyNats)
+        #expect(reloaded.evalReport?.primaryDirection == .lowerIsBetter)
+        #expect(reloaded.evalReport?.exampleCount == 30)
+        #expect(reloaded.status == .candidate)
+        let active = try await registry.activeVersion(for: lineage)
+        #expect(active == nil)
+    }
 }
 
 // Test-only helpers to toggle package fault flags from the test target.

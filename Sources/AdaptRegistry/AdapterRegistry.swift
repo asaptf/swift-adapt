@@ -211,6 +211,36 @@ public actor AdapterRegistry {
         try commitActivePointer(lineageID: lineageID, newActive: version)
     }
 
+    /// Records an evaluation report on an existing version's `version.json`.
+    ///
+    /// Does not change the active pointer, weights, or status. Intended for
+    /// post-train **measurements** (e.g. held-out cross-entropy) and later for
+    /// M3 gate results. Replaces any previous `evalReport` on that version.
+    public func recordEvalReport(
+        lineage: AdapterLineage,
+        version: Int,
+        report: EvalReport
+    ) throws {
+        try recordEvalReport(lineageID: lineage.lineageID, version: version, report: report)
+    }
+
+    /// Records an evaluation report by lineage ID.
+    public func recordEvalReport(
+        lineageID: String,
+        version: Int,
+        report: EvalReport
+    ) throws {
+        try Self.validateLineageID(lineageID)
+        let metaURL = try versionDirectory(lineageID: lineageID, version: version)
+            .appendingPathComponent("version.json")
+        guard fileManager.fileExists(atPath: metaURL.path) else {
+            throw AdaptRegistryError.notFound("version.json for v\(version) in \(lineageID)")
+        }
+        let meta = try AtomicFileWriter.readJSON(AdapterVersion.self, from: metaURL)
+        let updated = meta.with(evalReport: report)
+        try AtomicFileWriter.writeJSON(updated, to: metaURL)
+    }
+
     /// Clears the active pointer so the lineage uses base-model behavior.
     public func clearActive(lineage: AdapterLineage) throws {
         try clearActive(lineageID: lineage.lineageID)
