@@ -76,7 +76,25 @@ Override with `--registry /path/to/root` on every subcommand.
 
 Lineage identity is the SHA-256 of `taskID + baseModelID + LoRAConfig`. Training
 and generate/promote must use the **same** `--task`, `--model`, `--rank`,
-`--num-layers`, and `--scale` or they will point at different directories.
+`--num-layers`, `--scale`, and **`--keys`** or they will point at different
+directories.
+
+### `--keys` (target modules)
+
+Default is **attention only** (`self_attn.q/k/v/o_proj`) — not the model’s full
+linear set. Upstream `keys: null` would silently include MLP projections and
+~4× the parameters; Adapt makes the set explicit instead. Keys are
+**layer-relative paths** (mlx-swift-lm `namedModules` form).
+
+| Flag | Meaning |
+|---|---|
+| `--keys attention` (default) | `self_attn.q_proj,self_attn.k_proj,self_attn.v_proj,self_attn.o_proj` |
+| `--keys all` / `--keys wide` | attention + `mlp.gate_proj,mlp.up_proj,mlp.down_proj` |
+| `--keys model` | inherit model `loraDefaultKeys` (legacy upstream behaviour) |
+| `--keys self_attn.q_proj,self_attn.v_proj` | explicit list (comma or repeated options) |
+
+`inspect` prints the configured keys so you can answer “what does this adapter
+adapt?” without opening safetensors.
 
 ## Checkpoint / resume
 

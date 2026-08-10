@@ -126,7 +126,12 @@ public struct LoRAConfig: Codable, Sendable, Hashable {
     public struct LoRAParameters: Codable, Sendable, Hashable {
         public let rank: Int      // 8
         public let scale: Float   // 10.0 — upstream's multiplier, NOT PEFT alpha
-        public let keys: [String]?  // nil = the model's own default target keys
+        /// Target modules. Default is explicit attention-only
+        /// (`self_attn.q/k/v/o_proj`) — **not** `nil`. Layer-relative paths.
+        /// `nil` still means “model `loraDefaultKeys`” for legacy decode /
+        /// deliberate widen-to-model-defaults; do not reintroduce silent
+        /// inheritance as the library default (see §9 delta 1 follow-up).
+        public let keys: [String]?
     }
     public let numLayers: Int              // 16 — adapt the top N layers
     public let fineTuneType: FineTuneType  // .lora | .dora
@@ -389,6 +394,8 @@ Follows the `swift-extract` `@Extractable` pattern: the macro generates conforma
 Findings from reading the **pinned upstream source** (`mlx-swift` 0.31.6, `mlx-swift-lm` 3.31.4) rather than assuming its API. Each contradicts something written above; the inline sections have been corrected and cross-reference this list. Recorded during M1, 2026-08-10.
 
 **1. `LoRAConfig`'s fields were wrong.** §4.1 originally specified `rank` / `alpha` / `dropout` / `targetModules`. Upstream's `LoRAConfiguration` is `numLayers` / `fineTuneType` / `loraParameters{rank, scale, keys}`. Consequences: `alpha` is really `scale`, a direct multiplier rather than PEFT's `alpha/rank`; target modules are selected by `keys` (defaulting to the model's own `loraDefaultKeys`) combined with "top N layers", not by an explicit module list; and **there is no `dropout` at all** — upstream's `LoRALinear`/`QLoRALinear` do not implement it. Note this weakens §7's PII-memorization mitigations, which list dropout as one of them; rank and scrubbing now carry that load. Our `LoRAConfig` mirrors upstream's exact JSON encoding, so registry directories are loadable by upstream unchanged.
+
+**1b. (follow-up) Silent `keys: nil` reintroduced the breadth §4.1 had rejected.** Mapping `targetModules: ["q_proj","v_proj"]` onto upstream's shape used `keys: nil`, which inherits *all* linear projections for Qwen-style models (7,340,032 params / 28.0 MB F32 at rank-8×16 layers, attention+MLP). That weakened §7's low-rank memorization mitigation versus attention-only (2,621,440 params / 10.0 MB) and made adapters model-dependent. **Default is now an explicit attention set** (`self_attn.q/k/v/o_proj` — layer-relative paths as `namedModules` returns); callers widen via `LoRAConfig.allProjectionKeys` or `adapt-cli train --keys all`. `nil` remains valid for legacy decode. Changing the default correctly changes lineage identity.
 
 **2. `LoRATrain.train` cannot meet §4.3's interruption guarantee.** Its `progress` closure — the only way to stop it — is invoked every `stepsPerReport` / `stepsPerEval` / `saveEvery` iterations, never per step. "Cancellation loses ≤ 1 step" is inexpressible through it. `AdaptTrain` owns its step loop and calls upstream only for the pieces that do fit (`LoRATrain.loss`, `LoRAContainer`).
 

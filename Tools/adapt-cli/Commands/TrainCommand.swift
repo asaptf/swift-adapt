@@ -40,6 +40,20 @@ public struct TrainCommand: AsyncParsableCommand {
     @Option(name: .long, help: "Number of top layers to adapt.")
     var numLayers: Int = CLICommon.defaultNumLayers
 
+    /// Target modules for LoRA. Default is attention-only (`self_attn.*_proj`).
+    /// Presets: `attention`, `all`/`wide`, `model` (inherit upstream defaults).
+    /// Or pass layer-relative paths: `--keys self_attn.q_proj,self_attn.v_proj`.
+    @Option(
+        name: .long,
+        parsing: .upToNextOption,
+        help: """
+            Module keys to adapt (default: attention = self_attn.q/k/v/o_proj). \
+            Presets: attention | all | model. Or comma/space-separated layer-relative \
+            paths (e.g. self_attn.q_proj,self_attn.v_proj; MLP: mlp.gate_proj,mlp.up_proj,mlp.down_proj).
+            """
+    )
+    var keys: [String] = ["attention"]
+
     @Option(name: .long, help: "Micro-batch size.")
     var batchSize: Int = CLICommon.defaultBatchSize
 
@@ -76,12 +90,14 @@ public struct TrainCommand: AsyncParsableCommand {
             throw AdaptCLIError.invalidArgument("training file contains no examples: \(dataURL.path)")
         }
 
+        let resolvedKeys = try CLICommon.parseKeys(keys)
         let lineage = try CLICommon.makeLineage(
             taskID: task,
             modelID: model,
             rank: rank,
             scale: scale,
-            numLayers: numLayers
+            numLayers: numLayers,
+            keys: resolvedKeys
         )
         let registry = try CLICommon.openRegistry(root: self.registry)
 
@@ -113,6 +129,7 @@ public struct TrainCommand: AsyncParsableCommand {
             """
             Training lineage \(lineage.lineageID.prefix(16))…
               task=\(task)  model=\(model)  rank=\(rank)  layers=\(numLayers)
+              keys=\(lineage.loraConfig.keysDescription)
               steps=\(steps)  batch=\(batchSize)  lr=\(learningRate)  seed=\(seed)
               examples=\(examples.count)  checkpointEvery=\(checkpointEvery)
               registry=\(await registry.rootURL.path)

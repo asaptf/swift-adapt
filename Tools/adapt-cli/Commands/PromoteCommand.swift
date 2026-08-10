@@ -28,6 +28,17 @@ public struct PromoteCommand: AsyncParsableCommand {
     @Option(name: .long, help: "Number of adapted layers.")
     var numLayers: Int = CLICommon.defaultNumLayers
 
+    /// Must match training lineage. Same presets/names as `train --keys`.
+    @Option(
+        name: .long,
+        parsing: .upToNextOption,
+        help: """
+            LoRA module keys (must match training lineage). \
+            Presets: attention | all | model. Default: attention.
+            """
+    )
+    var keys: [String] = ["attention"]
+
     @Option(name: .long, help: "Registry root directory.")
     var registry: String?
 
@@ -48,12 +59,14 @@ public struct PromoteCommand: AsyncParsableCommand {
             return
         }
 
+        let resolvedKeys = try CLICommon.parseKeys(keys)
         let lineage = try CLICommon.makeLineage(
             taskID: task,
             modelID: model,
             rank: rank,
             scale: scale,
-            numLayers: numLayers
+            numLayers: numLayers,
+            keys: resolvedKeys
         )
         try await registry.promote(lineage: lineage, version: version)
         print(

@@ -19,6 +19,10 @@ struct InspectFormatterTests {
             taskID: "style-mirror",
             baseModelID: "mlx-community/Qwen3-0.6B-4bit",
             rank: 8,
+            keys: [
+                "self_attn.q_proj", "self_attn.k_proj", "self_attn.v_proj", "self_attn.o_proj",
+            ],
+            keysAreModelDefaults: false,
             activeVersion: 2,
             versions: [
                 .init(
@@ -39,10 +43,32 @@ struct InspectFormatterTests {
         let text = InspectFormatter.format(rootPath: "/tmp/r", lineages: [summary])
         #expect(text.contains("Lineage abc123"))
         #expect(text.contains("task:       style-mirror"))
+        #expect(
+            text.contains(
+                "keys:       self_attn.q_proj, self_attn.k_proj, self_attn.v_proj, self_attn.o_proj"
+            )
+        )
         #expect(text.contains("active:     v2"))
         #expect(text.contains("digest=deadbeefcafe"))
         #expect(text.contains("parent=v1"))
         #expect(text.contains("[active]"))
+    }
+
+    @Test("surfaces model-defaults when keys were nil")
+    func surfacesModelDefaults() {
+        let summary = InspectFormatter.LineageSummary(
+            lineageID: "legacy",
+            taskID: "style-mirror",
+            rank: 8,
+            keys: nil,
+            keysAreModelDefaults: true,
+            activeVersion: 1,
+            versions: [
+                .init(version: 1, status: "active", digestPrefix: "abc", exampleCount: 10)
+            ]
+        )
+        let text = InspectFormatter.format(rootPath: "/tmp/r", lineages: [summary])
+        #expect(text.contains("keys:       (model defaults)"))
     }
 
     @Test("shows none when no active")
@@ -55,5 +81,6 @@ struct InspectFormatterTests {
         let text = InspectFormatter.format(rootPath: "/tmp/r", lineages: [summary])
         #expect(text.contains("active:     (none — base model)"))
         #expect(text.contains("versions:   (none)"))
+        #expect(text.contains("keys:       (model defaults)"))
     }
 }

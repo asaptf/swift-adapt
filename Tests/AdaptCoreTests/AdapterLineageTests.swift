@@ -4,14 +4,14 @@ import Testing
 
 @Suite("AdapterLineage stable ID")
 struct AdapterLineageTests {
-    /// Fixed fixture used to pin the lineage digest.
+    /// Fixed fixture used to pin the lineage digest (default attention-only keys).
     private static let fixtureLineage = AdapterLineage(
         taskID: "email-style",
         baseModelID: "mlx-community/Qwen3-4B-4bit",
         loraConfig: LoRAConfig(
             rank: 8,
             scale: 10.0,
-            keys: nil,
+            keys: LoRAConfig.defaultAttentionKeys,
             numLayers: 16,
             fineTuneType: .lora
         )
@@ -19,8 +19,11 @@ struct AdapterLineageTests {
 
     /// Hardcoded expected SHA-256 hex of the canonical payload for `fixtureLineage`.
     /// If hashing inputs or LoRAConfig encoding change, this test must fail loudly.
+    ///
+    /// Note: changing the default `keys` from `nil` to attention-only correctly
+    /// changes lineage identity (a different key set is a different lineage).
     private static let expectedLineageID =
-        "6e45aaa192ef9a2b55edcdac5632329f6e03a3f17085e46f29a4288600f715dd"
+        "4bd8eff834adbfe272a87d435bb0244b4c8203199e59bbe2945c19a278069ba0"
 
     @Test("lineageID is stable and matches hardcoded digest")
     func stableHardcodedDigest() {
@@ -34,7 +37,6 @@ struct AdapterLineageTests {
         #expect(id1 == id2)
         #expect(id1.count == 64)
         #expect(id1.allSatisfy { $0.isHexDigit })
-        // Will be updated once we compute the real digest in the first green run.
         #expect(id1 == Self.expectedLineageID)
     }
 
@@ -66,11 +68,36 @@ struct AdapterLineageTests {
             LoRAConfig(rank: 8, scale: 10.0, keys: ["attn.q"]),
             LoRAConfig(rank: 8, scale: 10.0, keys: nil, numLayers: 8),
             LoRAConfig(rank: 8, scale: 10.0, keys: nil, numLayers: 16, fineTuneType: .dora),
+            LoRAConfig(rank: 8, scale: 10.0, keys: LoRAConfig.allProjectionKeys),
+            // Explicit nil keys (model defaults) must differ from attention default.
+            LoRAConfig(rank: 8, scale: 10.0, keys: nil, numLayers: 16),
         ]
         let ids = configs.map {
             AdapterLineage(taskID: baseTask, baseModelID: baseModel, loraConfig: $0).lineageID
         }
         #expect(Set(ids).count == ids.count)
+    }
+
+    @Test("key set change changes lineageID")
+    func keySetChangesLineage() {
+        let attention = AdapterLineage(
+            taskID: "t",
+            baseModelID: "m",
+            loraConfig: LoRAConfig(rank: 8, keys: LoRAConfig.defaultAttentionKeys)
+        )
+        let wide = AdapterLineage(
+            taskID: "t",
+            baseModelID: "m",
+            loraConfig: LoRAConfig(rank: 8, keys: LoRAConfig.allProjectionKeys)
+        )
+        let modelDefault = AdapterLineage(
+            taskID: "t",
+            baseModelID: "m",
+            loraConfig: LoRAConfig(rank: 8, keys: nil)
+        )
+        #expect(attention.lineageID != wide.lineageID)
+        #expect(attention.lineageID != modelDefault.lineageID)
+        #expect(wide.lineageID != modelDefault.lineageID)
     }
 
     @Test("lineageID is filesystem-safe")

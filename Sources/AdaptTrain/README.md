@@ -21,14 +21,50 @@ Resumable, interruption-safe on-device LoRA training over MLX.
 - **No user data in outcomes.** `TrainOutcome` carries losses, rates, and version
   metadata only.
 
+## Target modules (`LoRAConfig.keys`)
+
+`keys` is the set of linear submodule names LoRA is injected into, combined with
+`numLayers` (top-N). Upstream treats `keys: null` as “use the model’s
+`loraDefaultKeys`” — for Qwen-style decoders that is **all seven** projections
+(`q/k/v/o_proj` + `gate/up/down_proj`). That inheritance is model-dependent and
+silent: the same `LoRAConfig()` would train different adapters on different
+bases.
+
+**Adapt defaults to an explicit attention-only set** so the adapted surface is
+visible in config, lineage, and `adapt-cli inspect`:
+
+| Setting | Keys | Params† | Tensors† | Adapter size† |
+|---|---|---|---|---|
+| **Default** (`LoRAConfig()` / `train --keys attention`) | `self_attn.{q,k,v,o}_proj` | 2,621,440 | 128 | 10.0 MB |
+| Wide (`keys: LoRAConfig.allProjectionKeys` / `train --keys all`) | + `mlp.{gate,up,down}_proj` | 7,340,032 | 224 | 28.0 MB |
+
+† Measured on `mlx-community/Qwen3-4B-4bit`, rank 8, 16 layers, F32
+`adapters.safetensors` (100-step Nix fixture runs). MLP projections are ~3.8×
+wider than attention; they dominate the wide size (~2.8× params vs attention-only).
+`adapt-cli train` prints the resolved keys at start; `inspect` shows
+`keys: …` per lineage. Legacy on-disk configs with `keys: null` still decode
+(forward-compatible Codable).
+
+Changing the default key set changes lineage identity (SHA-256 over
+`LoRAConfig` JSON) — correct: a different key set is a different lineage.
+
+### Stored dtype is F32 (do not “optimise” to fp16)
+
+Adapter weights in `adapters.safetensors` are **float32**. Storing fp16 would
+halve disk (~5 MB vs ~10 MB for the attention default) but the resume
+guarantee asserts loss agreement to **1e-5** against an uninterrupted run, and
+that oracle depends on exact restorable weights (and matching AdamW moments).
+Quantising the very tensors that guarantee depends on is not a trade worth
+making for disk. Keep F32 until an explicit, re-validated resume path exists.
+
 ## Checkpoint format
 
 Each registry candidate `vN/` holds:
 
 | File | Owner | Role |
 |---|---|---|
-| `adapter_config.json` | Registry | Upstream-compatible `LoRAConfig` |
-| `adapters.safetensors` | Registry | Trainable LoRA (or synthetic) weights |
+| `adapter_config.json` | Registry | Upstream-compatible `LoRAConfig` (includes explicit `keys`) |
+| `adapters.safetensors` | Registry | Trainable LoRA (or synthetic) weights **F32** |
 | `version.json` | Registry | `AdapterVersion` metadata + digest |
 | `train_state.json` | AdaptTrain | step, batch cursor, loss history, seed, config snapshot |
 | `optimizer.safetensors` | AdaptTrain | AdamW moments keyed `m.<param>`, `v.<param>` |

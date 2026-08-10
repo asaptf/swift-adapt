@@ -18,6 +18,8 @@ public enum CLICommon {
     public static let defaultSeed: UInt64 = 42
     /// Default num layers to adapt.
     public static let defaultNumLayers = 8
+    /// Default LoRA target modules (attention only — see ``LoRAConfig/defaultAttentionKeys``).
+    public static let defaultKeys: [String] = LoRAConfig.defaultAttentionKeys
 
     /// Resolves a user-supplied path (expands `~`).
     public static func resolvePath(_ path: String) -> URL {
@@ -33,13 +35,56 @@ public enum CLICommon {
         return try AdapterRegistry()
     }
 
+    /// Parses `--keys` CLI input into a module-key list.
+    ///
+    /// Accepts:
+    /// - comma-separated names: `q_proj,v_proj`
+    /// - space-separated names (ArgumentParser multi-value): `q_proj v_proj`
+    /// - presets: `attention` → ``LoRAConfig/defaultAttentionKeys``,
+    ///   `all` / `wide` → ``LoRAConfig/allProjectionKeys``,
+    ///   `model` / `default` / `nil` → `nil` (inherit model `loraDefaultKeys`)
+    public static func parseKeys(_ raw: [String]) throws -> [String]? {
+        let tokens = raw
+            .flatMap { $0.split(separator: ",").map { String($0) } }
+            .map { $0.trimmingCharacters(in: .whitespacesAndNewlines) }
+            .filter { !$0.isEmpty }
+        guard !tokens.isEmpty else {
+            throw AdaptCLIError.invalidArgument(
+                "keys must be non-empty (use 'attention', 'all', or module names)"
+            )
+        }
+        if tokens.count == 1 {
+            switch tokens[0].lowercased() {
+            case "attention":
+                return LoRAConfig.defaultAttentionKeys
+            case "all", "wide":
+                return LoRAConfig.allProjectionKeys
+            case "model", "default", "nil", "null":
+                return nil
+            default:
+                break
+            }
+        }
+        // Reject accidental preset-as-one-of-many.
+        let lowered = Set(tokens.map { $0.lowercased() })
+        if lowered.contains("attention") || lowered.contains("all") || lowered.contains("wide")
+            || lowered.contains("model") || lowered.contains("default")
+        {
+            throw AdaptCLIError.invalidArgument(
+                "keys presets (attention/all/model) must be used alone, not mixed with module names"
+            )
+        }
+        return tokens
+    }
+
     /// Builds a lineage from CLI flags.
     public static func makeLineage(
         taskID: String,
         modelID: String,
         rank: Int,
         scale: Float,
-        numLayers: Int
+        numLayers: Int,
+        keys: [String]? = LoRAConfig.defaultAttentionKeys
     ) throws -> AdapterLineage {
         guard !taskID.isEmpty else {
             throw AdaptCLIError.invalidArgument("task id must be non-empty")
@@ -53,10 +98,13 @@ public enum CLICommon {
         guard numLayers > 0 else {
             throw AdaptCLIError.invalidArgument("num-layers must be > 0")
         }
+        if let keys, keys.isEmpty {
+            throw AdaptCLIError.invalidArgument("keys must be non-empty when provided")
+        }
         let config = LoRAConfig(
             rank: rank,
             scale: scale,
-            keys: nil,
+            keys: keys,
             numLayers: numLayers,
             fineTuneType: .lora
         )

@@ -29,6 +29,17 @@ public struct GenerateCommand: AsyncParsableCommand {
     @Option(name: .long, help: "Number of adapted layers.")
     var numLayers: Int = CLICommon.defaultNumLayers
 
+    /// Must match training lineage. Same presets/names as `train --keys`.
+    @Option(
+        name: .long,
+        parsing: .upToNextOption,
+        help: """
+            LoRA module keys (must match training lineage). \
+            Presets: attention | all | model. Default: attention.
+            """
+    )
+    var keys: [String] = ["attention"]
+
     @Option(name: .long, help: "Max new tokens.")
     var maxTokens: Int = 120
 
@@ -92,12 +103,14 @@ public struct GenerateCommand: AsyncParsableCommand {
     public func run() async throws {
         try MetalSupport.ensureMetallib()
 
+        let resolvedKeys = try CLICommon.parseKeys(keys)
         let lineage = try CLICommon.makeLineage(
             taskID: task,
             modelID: model,
             rank: rank,
             scale: scale,
-            numLayers: numLayers
+            numLayers: numLayers,
+            keys: resolvedKeys
         )
         let registry = try CLICommon.openRegistry(root: self.registry)
 

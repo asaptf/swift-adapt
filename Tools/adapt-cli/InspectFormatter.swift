@@ -9,6 +9,10 @@ public enum InspectFormatter {
         public var taskID: String?
         public var baseModelID: String?
         public var rank: Int?
+        /// Configured LoRA target modules; `nil` means inherit model defaults.
+        public var keys: [String]?
+        /// Whether `keys` was omitted (`null`) in stored config.
+        public var keysAreModelDefaults: Bool
         public var activeVersion: Int?
         public var versions: [VersionSummary]
 
@@ -17,6 +21,8 @@ public enum InspectFormatter {
             taskID: String? = nil,
             baseModelID: String? = nil,
             rank: Int? = nil,
+            keys: [String]? = nil,
+            keysAreModelDefaults: Bool = false,
             activeVersion: Int? = nil,
             versions: [VersionSummary] = []
         ) {
@@ -24,8 +30,24 @@ public enum InspectFormatter {
             self.taskID = taskID
             self.baseModelID = baseModelID
             self.rank = rank
+            self.keys = keys
+            self.keysAreModelDefaults = keysAreModelDefaults
             self.activeVersion = activeVersion
             self.versions = versions
+        }
+
+        /// Operator-facing keys line (what this adapter adapts).
+        public var keysDescription: String {
+            if keysAreModelDefaults {
+                return "(model defaults)"
+            }
+            guard let keys else {
+                return "(model defaults)"
+            }
+            if keys.isEmpty {
+                return "(empty)"
+            }
+            return keys.joined(separator: ", ")
         }
     }
 
@@ -86,6 +108,8 @@ public enum InspectFormatter {
             if let rank = lineage.rank {
                 lines.append("  rank:       \(rank)")
             }
+            // Always show keys so operators can answer "what does this adapter adapt?"
+            lines.append("  keys:       \(lineage.keysDescription)")
             if let active = lineage.activeVersion {
                 lines.append("  active:     v\(active)")
             } else {
@@ -125,11 +149,14 @@ public enum InspectFormatter {
         activeVersion: Int?
     ) -> LineageSummary {
         let first = versions.first
+        let configuredKeys = first?.lineage.loraConfig.loraParameters.keys
         return LineageSummary(
             lineageID: lineageID,
             taskID: first?.lineage.taskID,
             baseModelID: first?.lineage.baseModelID,
             rank: first?.lineage.loraConfig.loraParameters.rank,
+            keys: configuredKeys,
+            keysAreModelDefaults: configuredKeys == nil,
             activeVersion: activeVersion,
             versions: versions.map { meta in
                 VersionSummary(

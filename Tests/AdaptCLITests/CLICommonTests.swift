@@ -1,4 +1,5 @@
 import AdaptCLI
+import AdaptCore
 import Foundation
 import Testing
 
@@ -59,6 +60,73 @@ struct CLICommonTests {
         )
         #expect(a.lineageID == b.lineageID)
         #expect(a.lineageID.count == 64)
+        // Default keys are attention-only, not nil.
+        #expect(a.loraConfig.loraParameters.keys == LoRAConfig.defaultAttentionKeys)
+    }
+
+    @Test("makeLineage honours explicit keys")
+    func makeLineageExplicitKeys() throws {
+        let wide = try CLICommon.makeLineage(
+            taskID: "t",
+            modelID: "m",
+            rank: 8,
+            scale: 10,
+            numLayers: 16,
+            keys: LoRAConfig.allProjectionKeys
+        )
+        #expect(wide.loraConfig.loraParameters.keys == LoRAConfig.allProjectionKeys)
+
+        let inherit = try CLICommon.makeLineage(
+            taskID: "t",
+            modelID: "m",
+            rank: 8,
+            scale: 10,
+            numLayers: 16,
+            keys: nil
+        )
+        #expect(inherit.loraConfig.loraParameters.keys == nil)
+        #expect(wide.lineageID != inherit.lineageID)
+    }
+
+    @Test("parseKeys presets and explicit lists")
+    func parseKeys() throws {
+        #expect(try CLICommon.parseKeys(["attention"]) == LoRAConfig.defaultAttentionKeys)
+        #expect(try CLICommon.parseKeys(["all"]) == LoRAConfig.allProjectionKeys)
+        #expect(try CLICommon.parseKeys(["wide"]) == LoRAConfig.allProjectionKeys)
+        #expect(try CLICommon.parseKeys(["model"]) == nil)
+        #expect(
+            try CLICommon.parseKeys(["self_attn.q_proj", "self_attn.v_proj"])
+                == ["self_attn.q_proj", "self_attn.v_proj"]
+        )
+        #expect(
+            try CLICommon.parseKeys(["self_attn.q_proj,self_attn.v_proj"])
+                == ["self_attn.q_proj", "self_attn.v_proj"]
+        )
+        #expect(
+            try CLICommon.parseKeys(["mlp.gate_proj,mlp.up_proj,mlp.down_proj"]) == [
+                "mlp.gate_proj", "mlp.up_proj", "mlp.down_proj",
+            ]
+        )
+    }
+
+    @Test("parseKeys rejects empty and mixed presets")
+    func parseKeysRejects() {
+        do {
+            _ = try CLICommon.parseKeys([])
+            Issue.record("expected throw")
+        } catch let error as AdaptCLIError {
+            #expect(error.localizedDescription.contains("keys"))
+        } catch {
+            Issue.record("unexpected \(error)")
+        }
+        do {
+            _ = try CLICommon.parseKeys(["attention", "q_proj"])
+            Issue.record("expected throw")
+        } catch let error as AdaptCLIError {
+            #expect(error.localizedDescription.contains("preset"))
+        } catch {
+            Issue.record("unexpected \(error)")
+        }
     }
 
     @Test("resolvePath expands tilde")
