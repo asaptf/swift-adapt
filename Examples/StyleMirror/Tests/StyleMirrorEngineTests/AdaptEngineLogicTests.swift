@@ -1,4 +1,5 @@
 import AdaptCore
+import AdaptInference
 import Foundation
 import Testing
 @testable import StyleMirrorEngine
@@ -351,6 +352,44 @@ struct AdaptEngineErrorPathTests {
         #expect(text.contains("200"))
         #expect(text.contains("1200"))
         #expect(text.contains("not trimmed"))
+    }
+
+    @Test("demo generation options carry repetition penalty and top-p from configuration")
+    func generationOptionsPenaltyFromDemoPath() throws {
+        let root = FileManager.default.temporaryDirectory
+            .appendingPathComponent("style-mirror-opts-\(UUID().uuidString)", isDirectory: true)
+        let config = AdaptEngineConfiguration(
+            registryRoot: root,
+            heldOutJSONL: nil,
+            temperature: 0.3,
+            topP: 0.9,
+            repetitionPenalty: 1.2,
+            repetitionContextSize: 64
+        )
+        // Same helper prepareBlindRound / codeSwitchingDemo use.
+        let options = AdaptEngine.generationOptions(for: config, seed: 42)
+        #expect(options.temperature == 0.3)
+        #expect(options.topP == 0.9)
+        #expect(options.repetitionPenalty == 1.2)
+        #expect(options.repetitionContextSize == 64)
+        #expect(options.seed == 42)
+        #expect(options.chatTemplateEnableThinking == false)
+        // Non-identity penalty must survive validate() so MLX receives a processor.
+        try options.validate()
+        #expect(options.repetitionPenalty > 1.0)
+        #expect(options.topP < 1.0)
+    }
+
+    @Test("default AdaptEngineConfiguration enables non-identity sampling knobs")
+    func defaultConfigSamplingKnobs() {
+        let root = FileManager.default.temporaryDirectory
+            .appendingPathComponent("style-mirror-seeded-opts-\(UUID().uuidString)", isDirectory: true)
+        let config = AdaptEngineConfiguration(registryRoot: root)
+        #expect(config.repetitionPenalty > 1.0)
+        #expect(config.topP < 1.0)
+        let options = AdaptEngine.generationOptions(for: config, seed: 7)
+        #expect(options.repetitionPenalty == config.repetitionPenalty)
+        #expect(options.topP == config.topP)
     }
 }
 

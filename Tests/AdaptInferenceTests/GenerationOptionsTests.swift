@@ -62,6 +62,27 @@ struct GenerationOptionsTests {
         #expect(params.processor() != nil)
     }
 
+    @Test("StyleMirror demo sampling knobs reach GenerateParameters (penalty + top-p)")
+    func styleMirrorDemoKnobsMap() throws {
+        // Mirrors AdaptEngineConfiguration defaults used by AdaptEngine.generationOptions.
+        let options = GenerationOptions(
+            maxTokens: 120,
+            temperature: 0.0,
+            seed: 42,
+            topP: 0.9,
+            repetitionPenalty: 1.3,
+            repetitionContextSize: 64,
+            chatTemplateEnableThinking: false
+        )
+        let params = try options.asGenerateParameters()
+        #expect(params.repetitionPenalty == 1.3)
+        #expect(params.repetitionContextSize == 64)
+        #expect(params.topP == 0.9)
+        #expect(params.temperature == 0.0)
+        #expect(params.seed == 42)
+        #expect(params.processor() != nil)
+    }
+
     // MARK: - Validation
 
     @Test("topP outside (0, 1] throws invalidArgument")

@@ -464,6 +464,38 @@ struct ScriptedEngineTests {
         #expect(events.last?.total == 2)
     }
 
+    @Test("prepareBlindRound progress handler is invoked at least once")
+    func blindProgressHandlerMustBeInvoked() async throws {
+        let engine = ScriptedEngine(seed: 1)
+        let id = SampleCorpus.blindRounds[0].incoming.id
+        let box = ProgressBox()
+        _ = try await engine.prepareBlindRound(incomingEmailID: id) { event in
+            box.append(event)
+        }
+        let events = box.snapshot()
+        #expect(
+            !events.isEmpty,
+            "progress handler passed to prepareBlindRound was never invoked"
+        )
+        #expect(events.contains(where: { $0.total > 0 && $0.completed >= 0 }))
+    }
+
+    @Test("codeSwitchingDemo progress handler is invoked at least once")
+    func codeSwitchProgressHandlerMustBeInvoked() async {
+        let engine = ScriptedEngine(seed: 1)
+        let box = ProgressBox()
+        let result = await engine.codeSwitchingDemo { event in
+            box.append(event)
+        }
+        #expect(result.isAvailable)
+        let events = box.snapshot()
+        #expect(
+            !events.isEmpty,
+            "progress handler passed to codeSwitchingDemo was never invoked"
+        )
+        #expect(events.contains(where: { $0.total > 0 && $0.completed >= 0 }))
+    }
+
     // MARK: - Outbound meter honesty
 
     @Test("outbound traffic meter starts at zero without recordOutbound calls")

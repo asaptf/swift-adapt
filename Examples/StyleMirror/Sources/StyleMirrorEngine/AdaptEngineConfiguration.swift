@@ -37,6 +37,17 @@ public struct AdaptEngineConfiguration: Sendable, Equatable {
     public var maxGenerateTokens: Int
     /// Generation temperature (`0` = greedy).
     public var temperature: Float
+    /// Nucleus sampling mass. `1.0` disables top-p.
+    ///
+    /// Demo default `0.9` softens the rank-8 adapter's tendency to loop on
+    /// short non-English replies when temperature is slightly above zero.
+    public var topP: Float
+    /// Multiplicative repetition penalty (`1.0` = off). Values `> 1` penalize
+    /// recently emitted tokens — the cheap fix for degenerate Spanish/Russian
+    /// loops observed with the multilingual rank-8 adapter.
+    public var repetitionPenalty: Float
+    /// Recent-token window for ``repetitionPenalty``.
+    public var repetitionContextSize: Int
     /// Active version the demo opens with (seven-night seed: v7).
     ///
     /// ``AdaptEngine/restoreDemoStartingState()`` flips the registry pointer
@@ -59,7 +70,10 @@ public struct AdaptEngineConfiguration: Sendable, Equatable {
         seed: UInt64 = 42,
         maxSequenceLength: Int = 512,
         maxGenerateTokens: Int = 120,
-        temperature: Float = 0,
+        temperature: Float = 0.0,
+        topP: Float = 0.9,
+        repetitionPenalty: Float = 1.3,
+        repetitionContextSize: Int = 64,
         demoStartingActiveVersion: Int? = nil
     ) {
         self.modelID = modelID
@@ -77,6 +91,9 @@ public struct AdaptEngineConfiguration: Sendable, Equatable {
         self.maxSequenceLength = maxSequenceLength
         self.maxGenerateTokens = maxGenerateTokens
         self.temperature = temperature
+        self.topP = topP
+        self.repetitionPenalty = repetitionPenalty
+        self.repetitionContextSize = repetitionContextSize
         self.demoStartingActiveVersion = demoStartingActiveVersion
     }
 
