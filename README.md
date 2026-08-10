@@ -42,7 +42,9 @@ A controlled experiment with pre-registered pass criteria failed on all three te
 
 The cause was that training and generation both bypassed the model's chat template, so the model was continuing a document rather than answering a question. Both paths now go through one shared formatter, the convention used is recorded in the adapter's metadata, and a session refuses an adapter trained under a different convention rather than generating subtly wrong output. Measured after the change on Qwen3-4B-4bit at 100 steps: loss 9.63 → 1.49, and the base model produces a chat-conditioned reply instead of placeholder templates.
 
-Two things are still open. Training 300 steps on 50 examples collapses the loss to 0.001 and bleeds training vocabulary into unrelated answers; early stopping belongs to the evaluation gate in M2/M3, so for now keep the step count low. And Qwen3's default chat template enables a reasoning trace, which is fine for a library but wrong for a side-by-side comparison, so the demo's blind test is not ready.
+One thing is still open. Training 300 steps on 50 examples collapses the loss to 0.001 and bleeds training vocabulary into unrelated answers; early stopping belongs to the evaluation gate in M2/M3, so for now keep the step count low.
+
+Qwen3's default chat template enables a reasoning trace. Callers can turn it off via `GenerationOptions.chatTemplateEnableThinking` (CLI: `--chat-template-enable-thinking false`), which injects the Jinja variable `enable_thinking` through mlx-swift-lm's existing `additionalContext` path. Default remains template-default so library behaviour does not change silently.
 
 ## Quickstart
 

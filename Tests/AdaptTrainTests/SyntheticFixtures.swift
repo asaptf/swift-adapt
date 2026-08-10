@@ -82,8 +82,10 @@ struct FakeTokenizer: Tokenizer, SFTTokenizing, Sendable {
 
     func applyChatTemplate(
         messages: [[String: String]],
-        addGenerationPrompt: Bool
+        addGenerationPrompt: Bool,
+        additionalContext: [String: any Sendable]?
     ) throws -> [Int] {
+        _ = additionalContext
         guard hasChatTemplate else { throw SFTFormattingError.missingChatTemplate }
         var ids: [Int] = [200]
         for message in messages {

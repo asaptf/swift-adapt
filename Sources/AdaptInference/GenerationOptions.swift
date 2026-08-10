@@ -3,14 +3,19 @@ import MLXLMCommon
 
 /// Sendable generation knobs exchanged across the public ``AdaptSession`` API.
 ///
-/// Maps to `MLXLMCommon.GenerateParameters` inside the module. Callers never
-/// touch non-`Sendable` MLX types.
+/// Maps to `MLXLMCommon.GenerateParameters` inside the module (sampling knobs)
+/// and to chat-template Jinja context (template knobs). Callers never touch
+/// non-`Sendable` MLX types.
 ///
 /// ## Neutral defaults
 ///
 /// `topP = 1.0` and `repetitionPenalty = 1.0` are **disabled** (identity)
 /// values. They preserve the previous sampling behaviour so adding these knobs
 /// does not silently change existing outputs.
+///
+/// `chatTemplateEnableThinking = nil` leaves the model's chat template alone —
+/// no `enable_thinking` variable is injected. Models without that notion are
+/// unaffected.
 public struct GenerationOptions: Sendable, Equatable {
     /// Maximum number of new tokens to produce.
     public var maxTokens: Int
@@ -25,6 +30,18 @@ public struct GenerationOptions: Sendable, Equatable {
     public var repetitionPenalty: Float
     /// How many recent tokens participate in the repetition penalty window.
     public var repetitionContextSize: Int
+    /// Chat-template Jinja variable `enable_thinking` (not a sampling knob).
+    ///
+    /// - `nil` (default): do not pass the variable; the template uses its own
+    ///   default (Qwen3 defaults to thinking **on**).
+    /// - `true` / `false`: pass `enable_thinking` into the template context via
+    ///   mlx-swift-lm / swift-transformers `additionalContext`.
+    ///
+    /// **Chat-template path only.** Under raw concatenation a non-`nil` value
+    /// fails with ``SFTFormattingError/chatTemplateOptionNotApplicable(_:)``
+    /// rather than being ignored. Adapt does **not** strip thinking tags from
+    /// model output if a template ignores the flag — see AdaptInference README.
+    public var chatTemplateEnableThinking: Bool?
 
     /// Creates generation options.
     ///
@@ -35,13 +52,16 @@ public struct GenerationOptions: Sendable, Equatable {
     ///   - topP: Nucleus sampling mass in `(0, 1]`; `1.0` disables (default).
     ///   - repetitionPenalty: Penalty factor `≥ 1.0`; `1.0` disables (default).
     ///   - repetitionContextSize: Recent-token window for the penalty (default 20).
+    ///   - chatTemplateEnableThinking: Optional override for the template's
+    ///     `enable_thinking` variable; `nil` leaves the template default.
     public init(
         maxTokens: Int = 128,
         temperature: Float = 0.0,
         seed: UInt64? = nil,
         topP: Float = 1.0,
         repetitionPenalty: Float = 1.0,
-        repetitionContextSize: Int = 20
+        repetitionContextSize: Int = 20,
+        chatTemplateEnableThinking: Bool? = nil
     ) {
         self.maxTokens = maxTokens
         self.temperature = temperature
@@ -49,6 +69,7 @@ public struct GenerationOptions: Sendable, Equatable {
         self.topP = topP
         self.repetitionPenalty = repetitionPenalty
         self.repetitionContextSize = repetitionContextSize
+        self.chatTemplateEnableThinking = chatTemplateEnableThinking
     }
 
     /// Rejects out-of-range sampling knobs with ``AdaptInferenceError/invalidArgument(_:)``.

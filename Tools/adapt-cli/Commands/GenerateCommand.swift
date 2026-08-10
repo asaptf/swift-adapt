@@ -56,6 +56,16 @@ public struct GenerateCommand: AsyncParsableCommand {
     )
     var repetitionContextSize: Int = 20
 
+    @Option(
+        name: .customLong("chat-template-enable-thinking"),
+        help: """
+            Chat-template Jinja variable enable_thinking (true/false). \
+            Omit to leave the model's template default. Chat-template path only — \
+            errors under raw concatenation. Does not strip thinking tags from output.
+            """
+    )
+    var chatTemplateEnableThinking: Bool?
+
     @Option(name: .long, help: "Registry root directory.")
     var registry: String?
 
@@ -111,7 +121,8 @@ public struct GenerateCommand: AsyncParsableCommand {
             seed: seed,
             topP: topP,
             repetitionPenalty: repetitionPenalty,
-            repetitionContextSize: repetitionContextSize
+            repetitionContextSize: repetitionContextSize,
+            chatTemplateEnableThinking: chatTemplateEnableThinking
         )
         try options.validate()
 

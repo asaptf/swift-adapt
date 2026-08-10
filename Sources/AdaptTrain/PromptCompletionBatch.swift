@@ -56,15 +56,23 @@ public enum PromptCompletionBatch {
             encode: { text, addSpecial in
                 tokenizer.encode(text: text, addSpecialTokens: addSpecial)
             },
-            applyChatTemplate: { messages, addGenerationPrompt in
+            applyChatTemplate: { messages, addGenerationPrompt, additionalContext in
                 do {
                     let sendable: [[String: any Sendable]] = messages.map { dict in
                         dict.mapValues { $0 as any Sendable }
                     }
+                    var context: [String: any Sendable] = [
+                        "add_generation_prompt": addGenerationPrompt
+                    ]
+                    if let additionalContext {
+                        for (key, value) in additionalContext {
+                            context[key] = value
+                        }
+                    }
                     return try tokenizer.applyChatTemplate(
                         messages: sendable,
                         tools: nil,
-                        additionalContext: ["add_generation_prompt": addGenerationPrompt]
+                        additionalContext: context
                     )
                 } catch TokenizerError.missingChatTemplate {
                     throw SFTFormattingError.missingChatTemplate

@@ -29,7 +29,7 @@ Adapter loading, hot-swap, and streaming generation over `mlx-swift-lm`.
 |---|---|
 | `AdaptSession` | Actor: bind lineage + model, stream generate, reload, fuse |
 | `ModelSource` | `.id(_:revision:)` or `.directory(_:)` |
-| `GenerationOptions` | maxTokens / temperature / seed / topP / repetitionPenalty / repetitionContextSize |
+| `GenerationOptions` | maxTokens / temperature / seed / topP / repetitionPenalty / repetitionContextSize / **chatTemplateEnableThinking** |
 | `AdaptModelLoader` | Load `ModelContainer` / `ModelContext` via protocol seams |
 | `AdaptInferenceError` | One module error enum (`LocalizedError`), including `promptFormatMismatch` |
 
@@ -44,6 +44,41 @@ same `PromptFormatConvention` AdaptTrain used:
 The active adapter's `AdapterVersion.promptFormat` is checked on load. A
 mismatch (e.g. raw-trained adapter on a chat-template session) throws
 `AdaptInferenceError.promptFormatMismatch` — never silently re-encodes.
+
+### Chat-template reasoning mode (`chatTemplateEnableThinking`)
+
+Some models (notably Qwen3) default their Jinja chat template to a reasoning /
+"thinking" trace. That is fine for a library default, but wrong for a fair
+side-by-side demo: a base reply wrapped in `<think>…</think>` is identifiable
+at a glance.
+
+`GenerationOptions.chatTemplateEnableThinking`:
+
+| Value | Effect |
+|---|---|
+| `nil` (default) | Do **not** inject `enable_thinking`. The template uses its own default. |
+| `true` / `false` | Pass `enable_thinking` into the tokenizer via mlx-swift-lm / swift-transformers **`additionalContext`** (the existing template-variable path — no parallel channel). |
+
+**Scope.** Chat-template convention only. Under raw concatenation a non-`nil`
+value throws (`SFTFormattingError.chatTemplateOptionNotApplicable`) rather than
+being silently ignored.
+
+**What we deliberately do not do.** If a template ignores `enable_thinking` and
+the model still emits a reasoning trace, Adapt does **not** strip tags from the
+decoded text. Silent post-hoc surgery would hide a real template problem.
+Report the finding; fix the template or accept the output as-is.
+
+```swift
+let options = GenerationOptions(
+    maxTokens: 120,
+    chatTemplateEnableThinking: false   // demo / blind-test fairness
+)
+for try await token in session.generate(prompt: draft, options: options) {
+    print(token, terminator: "")
+}
+```
+
+CLI: `adapt-cli generate --chat-template-enable-thinking false …`
 
 ### `AdaptSession` ergonomics
 

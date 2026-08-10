@@ -2,8 +2,15 @@ import AdaptCore
 import Testing
 
 /// Stub with a synthetic chat template for offline formatter tests.
-private struct TemplateStubTokenizer: SFTTokenizing, Sendable {
+///
+/// Records the last `additionalContext` so tests can assert template variables
+/// (e.g. `enable_thinking`) reach the renderer.
+private final class TemplateStubTokenizer: SFTTokenizing, @unchecked Sendable {
     var hasChatTemplate: Bool
+    /// Last `additionalContext` passed to `applyChatTemplate` (for assertions).
+    private(set) var lastAdditionalContext: [String: any Sendable]?
+    /// Call count for `applyChatTemplate`.
+    private(set) var applyChatTemplateCount = 0
 
     init(hasChatTemplate: Bool = true) {
         self.hasChatTemplate = hasChatTemplate
@@ -20,10 +27,17 @@ private struct TemplateStubTokenizer: SFTTokenizing, Sendable {
 
     func applyChatTemplate(
         messages: [[String: String]],
-        addGenerationPrompt: Bool
+        addGenerationPrompt: Bool,
+        additionalContext: [String: any Sendable]?
     ) throws -> [Int] {
+        applyChatTemplateCount += 1
+        lastAdditionalContext = additionalContext
         guard hasChatTemplate else { throw SFTFormattingError.missingChatTemplate }
         // Markers: 200 bos, 201 user, 202 assistant-open, 203 turn-end.
+        // Thinking-mode markers (when enable_thinking is present):
+        //   true  → 210 (think-open after assistant-open)
+        //   false → 211 (no-think marker after assistant-open)
+        // Omitted enable_thinking → no extra marker (template default).
         var ids: [Int] = [200]
         for message in messages {
             let role = message["role"] ?? ""
@@ -34,6 +48,9 @@ private struct TemplateStubTokenizer: SFTTokenizing, Sendable {
         }
         if addGenerationPrompt {
             ids.append(202)
+            if let enableThinking = additionalContext?["enable_thinking"] as? Bool {
+                ids.append(enableThinking ? 210 : 211)
+            }
         }
         return ids
     }
@@ -136,5 +153,125 @@ struct SFTPromptFormatterTests {
         #expect(
             SFTPromptFormatter.convention(fromStored: .chatTemplate) == .chatTemplate
         )
+    }
+
+    // MARK: - chatTemplateEnableThinking
+
+    @Test("nil chatTemplateEnableThinking leaves template context empty (default)")
+    func enableThinkingNilLeavesContextEmpty() throws {
+        let tok = TemplateStubTokenizer(hasChatTemplate: true)
+        let defaultPrefix = try SFTPromptFormatter.formatGenerationPrefix(
+            prompt: "Hi",
+            tokenizer: tok,
+            convention: .chatTemplate
+        )
+        #expect(tok.lastAdditionalContext == nil)
+        // No think / no-think marker (210/211) when context is omitted.
+        #expect(!defaultPrefix.contains(210))
+        #expect(!defaultPrefix.contains(211))
+
+        let again = try SFTPromptFormatter.formatGenerationPrefix(
+            prompt: "Hi",
+            tokenizer: tok,
+            convention: .chatTemplate,
+            chatTemplateEnableThinking: nil
+        )
+        #expect(tok.lastAdditionalContext == nil)
+        #expect(again == defaultPrefix)
+    }
+
+    @Test("chatTemplateEnableThinking false reaches template as enable_thinking")
+    func enableThinkingFalseReachesTemplate() throws {
+        let tok = TemplateStubTokenizer(hasChatTemplate: true)
+        let ids = try SFTPromptFormatter.formatGenerationPrefix(
+            prompt: "Hi",
+            tokenizer: tok,
+            convention: .chatTemplate,
+            chatTemplateEnableThinking: false
+        )
+        #expect(tok.lastAdditionalContext?["enable_thinking"] as? Bool == false)
+        // Stub appends 211 when enable_thinking == false.
+        #expect(ids.last == 211)
+        #expect(ids.contains(211))
+        #expect(!ids.contains(210))
+    }
+
+    @Test("chatTemplateEnableThinking true reaches template as enable_thinking")
+    func enableThinkingTrueReachesTemplate() throws {
+        let tok = TemplateStubTokenizer(hasChatTemplate: true)
+        let ids = try SFTPromptFormatter.formatGenerationPrefix(
+            prompt: "Hi",
+            tokenizer: tok,
+            convention: .chatTemplate,
+            chatTemplateEnableThinking: true
+        )
+        #expect(tok.lastAdditionalContext?["enable_thinking"] as? Bool == true)
+        #expect(ids.last == 210)
+        #expect(!ids.contains(211))
+    }
+
+    @Test("true/false enable_thinking changes rendered prefix vs default")
+    func enableThinkingChangesRenderedPrefix() throws {
+        let tok = TemplateStubTokenizer(hasChatTemplate: true)
+        let defaultIDs = try SFTPromptFormatter.formatGenerationPrefix(
+            prompt: "Hi",
+            tokenizer: tok,
+            convention: .chatTemplate,
+            chatTemplateEnableThinking: nil
+        )
+        let offIDs = try SFTPromptFormatter.formatGenerationPrefix(
+            prompt: "Hi",
+            tokenizer: tok,
+            convention: .chatTemplate,
+            chatTemplateEnableThinking: false
+        )
+        let onIDs = try SFTPromptFormatter.formatGenerationPrefix(
+            prompt: "Hi",
+            tokenizer: tok,
+            convention: .chatTemplate,
+            chatTemplateEnableThinking: true
+        )
+        #expect(defaultIDs != offIDs)
+        #expect(defaultIDs != onIDs)
+        #expect(offIDs != onIDs)
+    }
+
+    @Test("chatTemplateEnableThinking under rawConcatenation throws explicitly")
+    func enableThinkingUnderRawThrows() {
+        let tok = TemplateStubTokenizer(hasChatTemplate: false)
+        do {
+            _ = try SFTPromptFormatter.formatGenerationPrefix(
+                prompt: "Hi",
+                tokenizer: tok,
+                convention: .rawConcatenation,
+                chatTemplateEnableThinking: false
+            )
+            Issue.record("expected chatTemplateOptionNotApplicable")
+        } catch let error as SFTFormattingError {
+            guard case .chatTemplateOptionNotApplicable(let message) = error else {
+                Issue.record("wrong error case: \(error)")
+                return
+            }
+            #expect(message.contains("chatTemplateEnableThinking"))
+            #expect(message.contains("rawConcatenation"))
+        } catch {
+            Issue.record("unexpected error type: \(error)")
+        }
+        // Encoder must not have been asked to render a template.
+        #expect(tok.applyChatTemplateCount == 0)
+    }
+
+    @Test("raw path with nil chatTemplateEnableThinking is unchanged")
+    func rawPathNilThinkingUnchanged() throws {
+        let tok = TemplateStubTokenizer(hasChatTemplate: false)
+        let ids = try SFTPromptFormatter.formatGenerationPrefix(
+            prompt: "Hi",
+            tokenizer: tok,
+            convention: .rawConcatenation,
+            chatTemplateEnableThinking: nil
+        )
+        let expected = tok.encode(text: "Hi", addSpecialTokens: true)
+        #expect(ids == expected)
+        #expect(tok.applyChatTemplateCount == 0)
     }
 }

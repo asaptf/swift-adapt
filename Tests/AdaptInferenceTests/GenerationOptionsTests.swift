@@ -16,6 +16,8 @@ struct GenerationOptionsTests {
         #expect(options.topP == 1.0)
         #expect(options.repetitionPenalty == 1.0)
         #expect(options.repetitionContextSize == 20)
+        // Template-default: do not inject enable_thinking.
+        #expect(options.chatTemplateEnableThinking == nil)
 
         let params = try options.asGenerateParameters()
         #expect(params.maxTokens == 128)
@@ -27,6 +29,17 @@ struct GenerationOptionsTests {
         #expect(params.repetitionPenalty == nil)
         #expect(params.repetitionContextSize == 20)
         #expect(params.processor() == nil)
+    }
+
+    @Test("chatTemplateEnableThinking is independent of GenerateParameters mapping")
+    func chatTemplateEnableThinkingNotInSamplingParams() throws {
+        let options = GenerationOptions(chatTemplateEnableThinking: false)
+        #expect(options.chatTemplateEnableThinking == false)
+        // Sampling mapping is unchanged — the flag is a template setting only.
+        let params = try options.asGenerateParameters()
+        #expect(params.maxTokens == 128)
+        #expect(params.topP == 1.0)
+        #expect(params.repetitionPenalty == nil)
     }
 
     @Test("explicit knobs map onto GenerateParameters fields")

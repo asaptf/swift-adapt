@@ -22,6 +22,13 @@ public enum SFTFormattingError: Error, LocalizedError, Sendable, Equatable {
     case missingChatTemplate
     /// Encoding produced no tokens (or an empty supervised span).
     case emptyEncoding(String)
+    /// A chat-template-only option was set while using raw concatenation.
+    ///
+    /// Options such as ``SFTPromptFormatter/formatGenerationPrefix(prompt:tokenizer:convention:chatTemplateEnableThinking:)``'s
+    /// `chatTemplateEnableThinking` map to Jinja template variables. Under
+    /// raw concatenation there is no template, so the option is meaningless —
+    /// refuse rather than silently ignore.
+    case chatTemplateOptionNotApplicable(String)
 
     public var errorDescription: String? {
         switch self {
@@ -29,6 +36,8 @@ public enum SFTFormattingError: Error, LocalizedError, Sendable, Equatable {
             return "Tokenizer has no chat template"
         case .emptyEncoding(let message):
             return "Empty encoding: \(message)"
+        case .chatTemplateOptionNotApplicable(let message):
+            return "Chat-template option not applicable: \(message)"
         }
     }
 }
@@ -43,27 +52,49 @@ public protocol SFTTokenizing: Sendable {
 
     /// Apply the model chat template to `messages`.
     ///
-    /// - Parameter addGenerationPrompt: When `true`, append the tokens that open
-    ///   an assistant turn (inference prefix / training prompt boundary). When
-    ///   `false`, emit only the provided messages (full train sequence with an
-    ///   assistant reply already present).
+    /// - Parameters:
+    ///   - addGenerationPrompt: When `true`, append the tokens that open
+    ///     an assistant turn (inference prefix / training prompt boundary). When
+    ///     `false`, emit only the provided messages (full train sequence with an
+    ///     assistant reply already present).
+    ///   - additionalContext: Extra Jinja variables for the template (for example
+    ///     `enable_thinking`). Merged into the template context the same way
+    ///     `mlx-swift-lm` / `swift-transformers` pass `additionalContext`. `nil`
+    ///     leaves the template's built-in defaults alone.
     /// - Throws: ``SFTFormattingError/missingChatTemplate`` when the tokenizer
     ///   has no template.
     func applyChatTemplate(
         messages: [[String: String]],
-        addGenerationPrompt: Bool
+        addGenerationPrompt: Bool,
+        additionalContext: [String: any Sendable]?
     ) throws -> [Int]
+}
+
+extension SFTTokenizing {
+    /// Convenience overload that passes no extra template variables.
+    public func applyChatTemplate(
+        messages: [[String: String]],
+        addGenerationPrompt: Bool
+    ) throws -> [Int] {
+        try applyChatTemplate(
+            messages: messages,
+            addGenerationPrompt: addGenerationPrompt,
+            additionalContext: nil
+        )
+    }
 }
 
 /// Type-erased ``SFTTokenizing`` so call sites can wrap any tokenizer once.
 public struct AnySFTTokenizer: SFTTokenizing, Sendable {
     private let _encode: @Sendable (String, Bool) -> [Int]
-    private let _applyChatTemplate: @Sendable ([[String: String]], Bool) throws -> [Int]
+    private let _applyChatTemplate:
+        @Sendable ([[String: String]], Bool, [String: any Sendable]?) throws -> [Int]
 
     /// Creates a type-erased tokenizer.
     public init(
         encode: @escaping @Sendable (String, Bool) -> [Int],
-        applyChatTemplate: @escaping @Sendable ([[String: String]], Bool) throws -> [Int]
+        applyChatTemplate:
+            @escaping @Sendable ([[String: String]], Bool, [String: any Sendable]?) throws -> [Int]
     ) {
         self._encode = encode
         self._applyChatTemplate = applyChatTemplate
@@ -75,9 +106,10 @@ public struct AnySFTTokenizer: SFTTokenizing, Sendable {
 
     public func applyChatTemplate(
         messages: [[String: String]],
-        addGenerationPrompt: Bool
+        addGenerationPrompt: Bool,
+        additionalContext: [String: any Sendable]?
     ) throws -> [Int] {
-        try _applyChatTemplate(messages, addGenerationPrompt)
+        try _applyChatTemplate(messages, addGenerationPrompt, additionalContext)
     }
 }
 
@@ -199,15 +231,33 @@ public enum SFTPromptFormatter {
 
     /// Formats the generation prefix for `prompt` under `convention`.
     ///
-    /// **Invariant:** for the same `prompt` and tokenizer, the returned ids are
+    /// **Invariant:** for the same `prompt`, tokenizer, and
+    /// `chatTemplateEnableThinking` (when `nil`), the returned ids are
     /// byte-identical to `formatTraining(...).tokens[0..<promptTokenCount]`.
+    /// Passing a non-`nil` `chatTemplateEnableThinking` may change the rendered
+    /// prefix relative to training (which uses the template default).
+    ///
+    /// - Parameter chatTemplateEnableThinking: When non-`nil`, sets the Jinja
+    ///   template variable `enable_thinking` via the tokenizer's
+    ///   `additionalContext` path (same mechanism as mlx-swift-lm). When `nil`
+    ///   (default), the template's own default is left alone. **Only meaningful
+    ///   under ``PromptFormatConvention/chatTemplate``** — under raw
+    ///   concatenation a non-`nil` value throws
+    ///   ``SFTFormattingError/chatTemplateOptionNotApplicable(_:)``.
     public static func formatGenerationPrefix(
         prompt: String,
         tokenizer: some SFTTokenizing,
-        convention: PromptFormatConvention
+        convention: PromptFormatConvention,
+        chatTemplateEnableThinking: Bool? = nil
     ) throws -> [Int] {
         switch convention {
         case .rawConcatenation:
+            if chatTemplateEnableThinking != nil {
+                throw SFTFormattingError.chatTemplateOptionNotApplicable(
+                    "chatTemplateEnableThinking requires the chat-template convention; "
+                        + "this session uses rawConcatenation"
+                )
+            }
             let ids = tokenizer.encode(text: prompt, addSpecialTokens: true)
             guard !ids.isEmpty else {
                 throw SFTFormattingError.emptyEncoding("prompt produced no tokens")
@@ -215,9 +265,16 @@ public enum SFTPromptFormatter {
             return ids
 
         case .chatTemplate:
+            let context: [String: any Sendable]?
+            if let enableThinking = chatTemplateEnableThinking {
+                context = ["enable_thinking": enableThinking]
+            } else {
+                context = nil
+            }
             let ids = try tokenizer.applyChatTemplate(
                 messages: [["role": "user", "content": prompt]],
-                addGenerationPrompt: true
+                addGenerationPrompt: true,
+                additionalContext: context
             )
             guard !ids.isEmpty else {
                 throw SFTFormattingError.emptyEncoding("chat template prefix was empty")

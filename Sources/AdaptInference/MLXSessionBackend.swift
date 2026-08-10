@@ -45,15 +45,26 @@ final class MLXSessionBackend: SessionModelBackend, @unchecked Sendable {
             encode: { text, addSpecial in
                 tokenizer.encode(text: text, addSpecialTokens: addSpecial)
             },
-            applyChatTemplate: { messages, addGenerationPrompt in
+            applyChatTemplate: { messages, addGenerationPrompt, additionalContext in
                 do {
                     let sendable: [[String: any Sendable]] = messages.map { dict in
                         dict.mapValues { $0 as any Sendable }
                     }
+                    // Merge Adapt's generation-prompt flag with caller template
+                    // variables (e.g. enable_thinking). Explicit context keys win
+                    // over the synthetic add_generation_prompt when both set.
+                    var context: [String: any Sendable] = [
+                        "add_generation_prompt": addGenerationPrompt
+                    ]
+                    if let additionalContext {
+                        for (key, value) in additionalContext {
+                            context[key] = value
+                        }
+                    }
                     return try tokenizer.applyChatTemplate(
                         messages: sendable,
                         tools: nil,
-                        additionalContext: ["add_generation_prompt": addGenerationPrompt]
+                        additionalContext: context
                     )
                 } catch TokenizerError.missingChatTemplate {
                     throw SFTFormattingError.missingChatTemplate
@@ -146,7 +157,8 @@ final class MLXSessionBackend: SessionModelBackend, @unchecked Sendable {
                         return try SFTPromptFormatter.formatGenerationPrefix(
                             prompt: prompt,
                             tokenizer: sft,
-                            convention: convention
+                            convention: convention,
+                            chatTemplateEnableThinking: options.chatTemplateEnableThinking
                         )
                     }
                     guard !tokenIDs.isEmpty else {
