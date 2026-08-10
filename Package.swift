@@ -11,6 +11,7 @@ let package = Package(
         .library(name: "AdaptCore", targets: ["AdaptCore"]),
         .library(name: "AdaptRegistry", targets: ["AdaptRegistry"]),
         .library(name: "AdaptTrain", targets: ["AdaptTrain"]),
+        .library(name: "AdaptInference", targets: ["AdaptInference"]),
         .executable(name: "adapt-cli", targets: ["adapt-cli"]),
     ],
     dependencies: [
@@ -47,6 +48,19 @@ let package = Package(
             path: "Sources/AdaptTrain",
             exclude: ["README.md"]
         ),
+        .target(
+            name: "AdaptInference",
+            dependencies: [
+                "AdaptCore",
+                "AdaptRegistry",
+                .product(name: "MLXLLM", package: "mlx-swift-lm"),
+                .product(name: "MLXLMCommon", package: "mlx-swift-lm"),
+                .product(name: "MLX", package: "mlx-swift"),
+                .product(name: "MLXNN", package: "mlx-swift"),
+            ],
+            path: "Sources/AdaptInference",
+            exclude: ["README.md"]
+        ),
         // Pure CLI logic (JSONL, formatting, shared options) — testable offline.
         .target(
             name: "AdaptCLI",
@@ -54,6 +68,7 @@ let package = Package(
                 "AdaptCore",
                 "AdaptRegistry",
                 "AdaptTrain",
+                "AdaptInference",
                 .product(name: "ArgumentParser", package: "swift-argument-parser"),
                 .product(name: "MLXLLM", package: "mlx-swift-lm"),
                 .product(name: "MLXLMCommon", package: "mlx-swift-lm"),
@@ -112,6 +127,15 @@ let package = Package(
             // (revision-keyed) on first AdaptTrainTests setup. See
             // Tests/AdaptTrainTests/README.md.
             exclude: ["README.md"]
+        ),
+        .testTarget(
+            name: "AdaptInferenceTests",
+            dependencies: [
+                "AdaptInference",
+                "AdaptCore",
+                "AdaptRegistry",
+            ],
+            path: "Tests/AdaptInferenceTests"
         ),
         .testTarget(
             name: "AdaptCLITests",
