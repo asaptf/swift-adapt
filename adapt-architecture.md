@@ -435,13 +435,13 @@ The strongest demo is one where **training happens in front of the audience** �
 
 **Two amplifiers:**
 
-- **Code-switching.** A user writing in three languages shows the adapter learned their voice *in each* — a generic model writes correctly, the adapter writes like them. No cloud personalization demo shows this, because none is handed this much personal data.
+- **Code-switching — claim retired 2026-08-10, kept as a screen.** The premise was that one adapter learns the user's voice in *each* language they write. Measured on the seven-night registry it does not hold: English is fine, Spanish is coherent only once a repetition penalty is applied, and Russian degenerates under every sampling setting tried (temperature 0–0.4, top-p 0.85–0.9, penalty 1.2–1.35). A rank-8 adapter over a corpus that is ~20% per non-English language is a capacity limit, not a knob. Raising the rank or the non-English share would mean re-training the seven nights and re-deriving every number in the demo, so it is deliberately not attempted for a screenshot. The screen stays available and now shows the real output and names the boundary; it is not performed as an argument.
 - **The regression that actually happened.** The demo's registry is seeded by seven real overnight runs, and on the first honest corpus the measured held-out loss went `4.06 → 3.70 → 3.38 → 3.42 → 3.19 → 3.12 → 3.34`. Night seven came out **worse than night six on ordinary mail, with no sabotage**, and became the active adapter anyway — because promotion is manual and the gate does not exist yet. That is this project's own "never degrade" promise failing for want of the mechanism that enforces it, and it is the strongest argument the demo has: measurement catches it, and rollback (an O(1) pointer flip) undoes it in milliseconds. A staged failure invites the suspicion that it was staged; this one is in the data.
 - **Poisoning**, kept as the *second* demonstration: 20 examples of ALL-CAPS pirate slang, refused by the same comparison. It shows the check works on an obvious case once the audience has seen it work on a real one.
 
 > Note for M3: the provisional check compares a candidate against the **active** version. Once a regression is active the bar drops — night eight measured 3.284 and would be accepted, because it only had to beat the regressed 3.341 rather than v6's 3.123. Comparing against the incumbent is correct; letting a regression *become* the incumbent is the bug. §4.5's gate is what prevents it.
 
-**60-second launch cut:** airplane mode → timelapse of seven nights (v1→v7, eval score climbing) → blind test.
+**60-second launch cut:** airplane mode → the seven nights (v1→v7, held-out loss falling, night seven kinking upward) → the gate refusing that regression → rollback. The blind test follows in the long form. Code-switching is not in either cut.
 
 Because StyleMirror was already the M5 deliverable, none of this changes the architecture — it only adds the blind-test, live-training, and code-switching screens to M5's acceptance criteria (§6).
 

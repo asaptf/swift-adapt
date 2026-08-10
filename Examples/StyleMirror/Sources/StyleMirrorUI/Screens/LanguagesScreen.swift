@@ -3,9 +3,15 @@ import SwiftUI
 
 /// Code-switching — one adapter, three languages (`DESIGN.md` §4.4).
 ///
-/// The hierarchy does the arguing: the base reply is literally dimmer and smaller
-/// than the adapter reply. Columns stack vertically rather than forming a grid of
-/// nine cells, which is what keeps it from reading as a spreadsheet.
+/// The hierarchy does the arguing: the base reply is dimmer and smaller than the
+/// adapter reply. Columns stack vertically rather than forming a grid of nine
+/// cells, which keeps it from reading as a spreadsheet.
+///
+/// The scene no longer claims the adapter learned the voice in every language.
+/// Measured: English holds, Spanish is coherent only with a repetition penalty,
+/// Russian degenerates under every sampling setting tried. That is a capacity
+/// limit of a rank-8 adapter over a corpus that is ~20% per non-English language,
+/// so the screen shows the real output and names the boundary instead.
 public struct LanguagesScreen: View {
     private let state: DemoState
 
@@ -44,7 +50,7 @@ public struct LanguagesScreen: View {
                 .textStyle(.title)
                 .foregroundStyle(Palette.ink)
             Spacer().frame(height: Space.xs)
-            Text("One adapter. It learned your voice in every language you write.")
+            Text("One adapter, three languages — and the honest state of it.")
                 .textStyle(.bodyS)
                 .foregroundStyle(Palette.inkSecondary)
 
@@ -58,7 +64,7 @@ public struct LanguagesScreen: View {
 
             Spacer(minLength: Space.m)
 
-            Text("Same adapter, no language setting. Your mail was already multilingual, so the adapter is too.")
+            Text("English holds. Spanish needs a repetition penalty to stay coherent. Russian does not hold — a rank-8 adapter with about a fifth of the corpus per non-English language is the limit of this recipe, not a setting to tweak.")
                 .textStyle(.caption)
                 .foregroundStyle(Palette.inkTertiary)
                 .frame(maxWidth: .infinity, alignment: .center)

@@ -236,22 +236,34 @@ before reveal — same type, same length class (trim all replies to 40–80 word
 signatures stripped, order shuffled every round. Any styling difference leaks
 the answer to the audience.
 
-### 4.4 Languages — Code-switching
+### 4.4 Languages — three languages, and the limit
+
+**Not performed.** The scene originally argued that one adapter learns the user's
+voice in every language they write. Measured against the seven-night registry it
+does not: English holds, Spanish needs a repetition penalty to stay coherent, and
+Russian degenerates under every sampling setting tried. That is a capacity limit
+of a rank-8 adapter over a corpus with ~20% of its examples per non-English
+language — not a knob — so the claim was retired rather than tuned for one
+screenshot.
+
+The screen stays reachable and now does something honest: it shows the real
+output and names the boundary.
 
 Header: Title "Code-switching." + Body S secondary sub (copy §8.5). Below, three
-equal column cards, 437 × ~520, gap 24 — one per language. Inside each card:
+equal column cards, 437 × 520, gap 24 — one per language, named in itself
+("English" / "Español" / "Русский"). Inside each card:
 
-1. Headline: the language, named in itself — "English" / "Español" / "Русский".
+1. Headline: the language.
 2. 8 → the incoming snippet, Data S secondary, prefixed "RE:".
 3. 16 → **Base block:** 3 pt left rail in `baseModel`, Label "BASE MODEL"
-   (tertiary), Body S in *secondary* ink.
+   (tertiary), Body S in *secondary* ink, clamped to 8 lines.
 4. 16 → **Adapter block:** 3 pt left rail in `accent`, `accentWash` @ 6 % fill,
-   Label "ADAPTER V8" (accent), Body in *primary* ink.
+   Label "ADAPTER V…" (accent), Body in *primary* ink, clamped to 6 lines.
 
-The hierarchy does the arguing: the base reply is literally dimmer and smaller
-than the adapter reply. Vertical stacking inside columns (never a grid of nine
-cells) is what keeps it from reading as a spreadsheet. Bottom caption spanning
-all columns, Caption tertiary: copy §8.5.
+The hierarchy still does the arguing where the output supports it — the base reply
+is dimmer and smaller than the adapter's. Vertical stacking inside columns (never
+a grid of nine cells) keeps it from reading as a spreadsheet. Bottom caption
+spanning all columns, Caption tertiary: copy §8.5.
 
 ### 4.5 Gate — the regression that actually happened
 
@@ -519,23 +531,16 @@ emoji, no "magic", no "powerful". Where a claim is made, a number is nearby.
 
 ### 8.5 Languages
 
-- **Code-switching.** / One adapter. It learned your voice in every language you
-  write.
+- **Code-switching.** / One adapter, three languages — and the honest state of it.
 - Column heads: `English` `Español` `Русский` · block labels: `BASE MODEL`
-  `ADAPTER V8`
-- Bottom caption: Same adapter, no language setting. Your mail was already
-  multilingual, so the adapter is too.
-- Sample fixtures (replace with the presenter's real voice; keep base = correct
-  but stiff, adapter = short, direct, personal):
-  - EN base: "Thank you for reaching out. I will review the document and revert
-    with my feedback at the earliest opportunity." / EN adapter: "Got it — I'll
-    read it tonight and send you notes tomorrow before standup."
-  - ES base: "Le agradezco su mensaje. Procederé a revisar el documento y le
-    haré llegar mis comentarios a la mayor brevedad posible." / ES adapter:
-    "Genial, lo miro esta noche y mañana te paso mis notas antes de la reunión."
-  - RU base: "Благодарю за ваше письмо. Я ознакомлюсь с документом и направлю
-    свои комментарии в ближайшее время." / RU adapter: "Принял — вечером
-    посмотрю, завтра до созвона скину комментарии."
+  `ADAPTER V…`
+- Bottom caption: English holds. Spanish needs a repetition penalty to stay
+  coherent. Russian does not hold — a rank-8 adapter with about a fifth of the
+  corpus per non-English language is the limit of this recipe, not a setting to
+  tweak.
+- The retired line, kept here so nobody reinstates it: ~~"It learned your voice in
+  every language you write."~~ / ~~"Your mail was already multilingual, so the
+  adapter is too."~~
 
 ### 8.6 Gate
 
