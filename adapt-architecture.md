@@ -237,7 +237,15 @@ public struct PromotionPolicy: Sendable {
 }
 ```
 
-> **Open question for M3 (raised in review, unresolved).** As specified, this gate is statistically underpowered: 10–20% of a buffer gated at 40 examples is a **held-out set of 4–8 examples**, and perplexity noise on 8 examples far exceeds a 0.02 threshold — the gate would mostly be measuring sampling noise, which undermines the "never degrade" promise it exists to keep. Before implementing M3, decide: (a) a minimum absolute held-out size, not just a percentage; (b) a **paired** comparison — candidate vs. incumbent scored on the *same* examples, compared per-example — rather than two independent averages; (c) a confidence interval or sign test, so the gate can answer "is this difference real?"; and (d) the units of `maxPerplexityRegression` — ratio or absolute nats? Undefined today.
+> **Gate redesign — decided 2026-08-10, supersedes the sketch above.** As originally specified the gate was statistically powerless: 10–20% of a buffer gated at 40 examples is a held-out set of 4–8 examples, and noise at that size dwarfs an 0.02 threshold, so the gate would mostly have been measuring sampling noise — hollowing out the one promise it exists to keep. M3 implements the following instead.
+>
+> 1. **The held-out set is pinned per lineage.** Chosen once, from a persisted seed, stratified by `SignalSource` and recency; **every version of a lineage is scored on the same examples**. Without this, each promotion decision uses a different yardstick and "v8 beat v7" is not a comparison at all. This also gives M6 a well-defined local re-evaluation target.
+> 2. **A minimum absolute floor, not just a share.** At least `minHeldOut` examples (default 30) in addition to the 10–20% rule. Below the floor the gate **abstains**: it reports insufficient evidence and promotes nothing. Abstaining is not rejecting — it must *not* feed the exponential backoff of §4.6, because the deficiency is data volume, not a bad adapter.
+> 3. **Paired per-example comparison.** Candidate and incumbent are scored on the same examples and compared as per-example differences, never as two independent averages. Example difficulty varies far more than the effect being measured, and pairing cancels it.
+> 4. **A decision rule that can say "this is noise".** One-sided Wilcoxon signed-rank test over the paired differences (nonparametric — no normality assumption, sound at n≈30), at a stated `alpha` (default 0.05). The report carries the effect size next to the verdict, so a statistically significant but negligible gain is visible rather than hidden behind a boolean.
+> 5. **Threshold units are explicit.** Regression is measured in **absolute nats of mean per-token cross-entropy**, not as a perplexity ratio: nats are additive and comparable, whereas perplexity is exponential and "0.02" of it means nothing without stating a base. `maxPerplexityRegression` is therefore renamed `maxCrossEntropyRegressionNats`.
+>
+> The primary metric must improve *significantly*; secondary metrics must not regress beyond their bounded point estimate.
 
 ### 4.6 AdaptSchedule — invisible orchestration
 
@@ -306,6 +314,8 @@ Follows the `swift-extract` `@Extractable` pattern: the macro generates conforma
 ## 6. Milestones for Claude Code
 
 > Feed one milestone at a time. Each ends with a green test suite and a runnable artifact. Do not start milestone N+1 until N's acceptance criteria pass.
+
+> **Revised order — decided 2026-08-10.** Module dependencies do not follow the numbering. `AdaptInference` needs only the registry and a model, so it is pulled **ahead of M2**: it is the smallest module in the plan and the only thing standing between the StyleMirror demo and real on-device generation (`AdaptTrain` is already done, so Act 2 can train for real once inference exists). M3's gate, by contrast, genuinely depends on M2 — the held-out set comes from the replay buffer — so it cannot be moved up. Working order: **M1 → AdaptInference → M2 → M3 → M4 → rest of M5 → M6.** The per-milestone acceptance discipline above is unchanged; only the sequence of independent modules moves.
 
 ### M1 — Core engine: types + registry + offline training loop (macOS only)
 **Scope:** `AdaptCore`, `AdaptRegistry`, `AdaptTrain`, `adapt-cli`.
