@@ -1,0 +1,26 @@
+Adapt
+Copyright 2026 Andrey Sapunov
+
+Licensed under the Apache License, Version 2.0 (the "License"); see the LICENSE
+file in the root of this repository.
+
+------------------------------------------------------------------------------
+Third-party dependencies
+------------------------------------------------------------------------------
+
+This project depends on the following packages. Their licences are compatible
+with Apache-2.0; each remains under its own terms and copyright.
+
+  mlx-swift                — MIT         — https://github.com/ml-explore/mlx-swift
+  mlx-swift-lm             — MIT         — https://github.com/ml-explore/mlx-swift-lm
+  swift-argument-parser    — Apache-2.0  — https://github.com/apple/swift-argument-parser
+  swift-syntax             — Apache-2.0  — https://github.com/swiftlang/swift-syntax
+
+Used by the command-line tool only, not by the library modules:
+
+  swift-transformers       — Apache-2.0  — https://github.com/huggingface/swift-transformers
+  swift-huggingface        — Apache-2.0  — https://github.com/huggingface/swift-huggingface
+
+The Metal kernel library required by MLX under `swift test` is compiled from the
+resolved mlx-swift checkout at test time and is not distributed with this
+repository. See scripts/ensure-mlx-metal-library.sh.

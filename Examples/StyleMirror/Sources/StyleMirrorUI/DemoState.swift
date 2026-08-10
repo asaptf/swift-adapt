@@ -322,6 +322,26 @@ public final class DemoState {
         }
     }
 
+    /// Applies launch-time options: open on a screen, optionally preload the
+    /// sample corpus, optionally fire that screen's primary action.
+    ///
+    /// Used for rehearsal and screenshot capture so no synthetic input is needed.
+    public func applyLaunchOptions(_ options: LaunchOptions = .fromCommandLine()) async {
+        if options.preloadSampleCorpus, pastedCorpus.isEmpty {
+            pastedCorpus = await engine.sentEmails
+                .map(\.body)
+                .joined(separator: "\n\n")
+        }
+        if let screen = options.screen {
+            self.screen = screen
+        }
+        guard options.autorun else { return }
+        // Let the screen settle so a capture shows the action's result rather
+        // than its first frame.
+        try? await Task.sleep(for: .milliseconds(600))
+        await firePrimaryAction()
+    }
+
     /// ⌘⌥F — toggles between the stage-realistic run and a fast pass.
     public func toggleFastMode() {
         trainingConfiguration =

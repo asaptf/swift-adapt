@@ -24,6 +24,7 @@ public struct RootView: View {
         .frame(width: WindowGeometry.width, height: WindowGeometry.height)
         .background(Palette.bg)
         .task { await state.start() }
+        .task { await state.applyLaunchOptions() }
         // Focusable so the window receives Space when no text field owns focus;
         // a focused paste field still consumes it first (§5).
         .focusable()
