@@ -398,6 +398,67 @@ public struct GateOutcome: Sendable, Equatable, Hashable {
 @available(*, deprecated, renamed: "GateOutcome")
 public typealias PoisoningOutcome = GateOutcome
 
+// MARK: - Recorded comparison / rollback / best-vs-active
+
+/// Result of a real registry rollback (O(1) pointer flip).
+///
+/// Elapsed time is measured, not staged — the demo shows this number.
+public struct RollbackResult: Sendable, Equatable, Hashable {
+    /// Adapter that was active before the rollback.
+    public let fromVersion: AdapterVersion
+    /// Adapter that is active after the rollback.
+    public let toVersion: AdapterVersion
+    /// Wall time for the registry pointer flip (including integrity check).
+    public let elapsed: Duration
+
+    public init(
+        fromVersion: AdapterVersion,
+        toVersion: AdapterVersion,
+        elapsed: Duration
+    ) {
+        self.fromVersion = fromVersion
+        self.toVersion = toVersion
+        self.elapsed = elapsed
+    }
+}
+
+/// Whether the active adapter is the best one we have measured.
+///
+/// For held-out cross-entropy (lower is better): a positive ``gapNats`` means
+/// the active version is worse than the best recorded version by that many nats.
+/// Ties set ``isActiveBest`` to `true` and ``gapNats`` to ~0.
+public struct ActiveVersusBest: Sendable, Equatable, Hashable {
+    /// Currently active adapter.
+    public let active: AdapterVersion
+    /// Version with the best recorded held-out CE (lowest nats). On a tie that
+    /// includes the active version, this is the active version.
+    public let bestMeasured: AdapterVersion
+    /// Active version's recorded mean CE (nats/token).
+    public let activeScore: Double
+    /// Best recorded mean CE (nats/token).
+    public let bestScore: Double
+    /// `true` when the active score is equal to the best (including ties).
+    public let isActiveBest: Bool
+    /// `activeScore - bestScore` (positive ⇒ active is worse under lower-is-better).
+    public let gapNats: Double
+
+    public init(
+        active: AdapterVersion,
+        bestMeasured: AdapterVersion,
+        activeScore: Double,
+        bestScore: Double,
+        isActiveBest: Bool,
+        gapNats: Double
+    ) {
+        self.active = active
+        self.bestMeasured = bestMeasured
+        self.activeScore = activeScore
+        self.bestScore = bestScore
+        self.isActiveBest = isActiveBest
+        self.gapNats = gapNats
+    }
+}
+
 // MARK: - Network / offline
 
 /// Coarse reachability for the airplane-mode scene.

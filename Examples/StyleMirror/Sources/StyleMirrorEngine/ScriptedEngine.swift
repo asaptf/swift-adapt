@@ -205,6 +205,36 @@ public final class ScriptedEngine: StyleMirrorEngine, Sendable {
         await state.runPoisoning(lineage: lineage)
     }
 
+    public func compareRecordedVersions(
+        candidateVersion: Int,
+        incumbentVersion: Int
+    ) async throws -> GateOutcome {
+        try await state.compareRecordedVersions(
+            candidateVersion: candidateVersion,
+            incumbentVersion: incumbentVersion
+        )
+    }
+
+    public func rollbackToVersion(_ version: Int) async throws -> RollbackResult {
+        try await state.rollbackToVersion(version)
+    }
+
+    public func restoreDemoStartingState() async throws {
+        await state.restoreDemoStartingState(startingVersion: Self.demoStartingActiveVersion)
+    }
+
+    public func activeVersusBestMeasured() async -> ActiveVersusBest? {
+        await state.activeVersusBestMeasured()
+    }
+
+    /// Opening active version for the scripted seven-night timeline (v7).
+    public static let demoStartingActiveVersion = 7
+
+    /// Test helper: replace the in-memory timeline (e.g. with CE-measured versions).
+    func installVersionsForTesting(_ versions: [AdapterVersion]) async {
+        await state.replaceVersions(versions)
+    }
+
     // MARK: - Loss curve (scripted but noisy)
 
     struct LossPoint: Sendable, Equatable {
@@ -306,7 +336,12 @@ public final class ScriptedEngine: StyleMirrorEngine, Sendable {
                 evalReport: EvalReport(
                     primaryScore: scores[v - 1],
                     passedGate: true,
-                    notes: "scripted timeline night \(v)"
+                    notes: "scripted timeline night \(v)",
+                    // Style-match (higher is better) — not held-out CE. Keeps
+                    // ``ProvisionalPromotionGate/heldOutCE(from:)`` from treating
+                    // these as cross-entropy for the night-seven regression demo.
+                    primaryMetric: "style_match",
+                    primaryDirection: .higherIsBetter
                 ),
                 status: isActive ? .active : .archived,
                 weightsDigest: weightsDigest,
@@ -487,6 +522,77 @@ extension ScriptedEngine {
                 activeVersionAfter: candidate,
                 candidate: candidate
             )
+        }
+
+        /// Provisional verdict from stored measurements (no re-measure).
+        func compareRecordedVersions(
+            candidateVersion: Int,
+            incumbentVersion: Int
+        ) throws -> GateOutcome {
+            guard let candidate = versions.first(where: { $0.version == candidateVersion }) else {
+                throw StyleMirrorError.notFound("version v\(candidateVersion)")
+            }
+            guard let incumbent = versions.first(where: { $0.version == incumbentVersion }) else {
+                throw StyleMirrorError.notFound("version v\(incumbentVersion)")
+            }
+            guard let outcome = ProvisionalPromotionGate.evaluateRecorded(
+                candidate: candidate,
+                activeBefore: incumbent
+            ) else {
+                throw StyleMirrorError.invalidState(
+                    "v\(candidateVersion) has no recorded held-out CE measurement to compare"
+                )
+            }
+            return outcome
+        }
+
+        /// In-memory pointer flip (scripted stand-in for registry rollback).
+        func rollbackToVersion(_ version: Int) throws -> RollbackResult {
+            guard let from = activeVersion else {
+                throw StyleMirrorError.invalidState("no active adapter to roll back from")
+            }
+            guard let target = versions.first(where: { $0.version == version }) else {
+                throw StyleMirrorError.notFound("version v\(version)")
+            }
+            let started = ContinuousClock.now
+            versions = versions.map { entry in
+                if entry.version == version {
+                    return entry.with(status: .active)
+                }
+                if entry.status == .active {
+                    return entry.with(status: .rolledBack)
+                }
+                return entry
+            }
+            let elapsed = started.duration(to: .now)
+            let to = versions.first(where: { $0.version == version }) ?? target.with(status: .active)
+            return RollbackResult(fromVersion: from, toVersion: to, elapsed: elapsed)
+        }
+
+        /// Restores the demo's opening active version (v7). Does not fabricate data.
+        func restoreDemoStartingState(startingVersion: Int) {
+            guard versions.contains(where: { $0.version == startingVersion }) else {
+                return
+            }
+            versions = versions.map { entry in
+                if entry.version == startingVersion {
+                    return entry.with(status: .active)
+                }
+                if entry.status == .active {
+                    return entry.with(status: .archived)
+                }
+                return entry
+            }
+        }
+
+        func activeVersusBestMeasured() -> ActiveVersusBest? {
+            ProvisionalPromotionGate.activeVersusBest(versions: versions, active: activeVersion)
+        }
+
+        /// Replace the timeline with versions that carry held-out CE reports
+        /// (test helper for recorded-comparison coverage).
+        func replaceVersions(_ newVersions: [AdapterVersion]) {
+            versions = newVersions
         }
 
         /// Poisoned corpus: same ``GateOutcome`` type, but the gate refuses.

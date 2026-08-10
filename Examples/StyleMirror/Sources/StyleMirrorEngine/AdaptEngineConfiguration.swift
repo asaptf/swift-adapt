@@ -37,6 +37,12 @@ public struct AdaptEngineConfiguration: Sendable, Equatable {
     public var maxGenerateTokens: Int
     /// Generation temperature (`0` = greedy).
     public var temperature: Float
+    /// Active version the demo opens with (seven-night seed: v7).
+    ///
+    /// ``AdaptEngine/restoreDemoStartingState()`` flips the registry pointer
+    /// back here after a rollback so a second performance starts in the same
+    /// state. `nil` means restore is a no-op (empty / non-demo registries).
+    public var demoStartingActiveVersion: Int?
 
     public init(
         modelID: String = "mlx-community/Qwen3-4B-4bit",
@@ -53,7 +59,8 @@ public struct AdaptEngineConfiguration: Sendable, Equatable {
         seed: UInt64 = 42,
         maxSequenceLength: Int = 512,
         maxGenerateTokens: Int = 120,
-        temperature: Float = 0
+        temperature: Float = 0,
+        demoStartingActiveVersion: Int? = nil
     ) {
         self.modelID = modelID
         self.taskID = taskID
@@ -70,6 +77,7 @@ public struct AdaptEngineConfiguration: Sendable, Equatable {
         self.maxSequenceLength = maxSequenceLength
         self.maxGenerateTokens = maxGenerateTokens
         self.temperature = temperature
+        self.demoStartingActiveVersion = demoStartingActiveVersion
     }
 
     /// Lineage identity matching the seeded seven-night registry.
@@ -104,7 +112,11 @@ public struct AdaptEngineConfiguration: Sendable, Equatable {
         let heldOutURL = FileManager.default.fileExists(atPath: heldOut.path) ? heldOut : nil
         return AdaptEngineConfiguration(
             registryRoot: registry,
-            heldOutJSONL: heldOutURL
+            heldOutJSONL: heldOutURL,
+            // Seven-night seed ends with v7 active (including the measured
+            // regression vs v6). Restore re-selects this pointer only — it does
+            // not fabricate data.
+            demoStartingActiveVersion: 7
         )
     }
 }

@@ -59,6 +59,7 @@ let package = Package(
             dependencies: [
                 "StyleMirrorEngine",
                 .product(name: "AdaptCore", package: "swift-adapt"),
+                .product(name: "AdaptRegistry", package: "swift-adapt"),
             ],
             path: "Tests/StyleMirrorEngineTests"
         ),

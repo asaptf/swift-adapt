@@ -58,6 +58,21 @@ public enum ProvisionalPromotionGate: Sendable {
     /// Compares candidate vs incumbent mean CE and builds a ``GateOutcome``.
     ///
     /// Does **not** mutate a registry. Callers promote or leave active alone.
+    ///
+    /// ## Incumbent must not be a past regression
+    ///
+    /// This check compares a candidate against the **active** adapter. That is
+    /// the right bar for a single promotion decision — but only if the
+    /// incumbent itself was never allowed to become a regression.
+    ///
+    /// Once a worse adapter has been promoted (the seven-night seed: night
+    /// seven measured 3.341 nats against night six's 3.123, and became active
+    /// because promotion was manual and no gate existed), the bar is
+    /// permanently lowered: a later night at 3.284 would pass against the
+    /// regressed active even though it still loses to v6. Comparing against
+    /// the incumbent is correct; letting a regression *become* the incumbent
+    /// is the failure mode M3's gate must prevent. Written here so the next
+    /// person building §4.5 sees it at the comparison site, not only in a chat.
     public static func evaluate(_ input: ProvisionalGateInput) -> GateOutcome {
         let candidateCE = input.candidateMeanCrossEntropyNats
         let incumbentCE = input.incumbentMeanCrossEntropyNats
@@ -118,6 +133,95 @@ public enum ProvisionalPromotionGate: Sendable {
                 ? input.candidate.with(status: .active)
                 : input.candidate.with(status: .candidate)
         )
+    }
+
+    /// Provisional verdict from two versions' **already-recorded** held-out
+    /// measurements. No retraining, no re-measuring.
+    ///
+    /// Reads held-out mean cross-entropy nats from each version's
+    /// ``EvalReport`` (lower is better). Returns `nil` when the candidate has
+    /// no CE measurement (bare style-match scores are ignored).
+    ///
+    /// See ``evaluate(_:)`` for the incumbent-must-not-be-a-regression note —
+    /// that consideration applies equally when replaying stored numbers for the
+    /// demo (e.g. "v7 measured 3.341 against v6's 3.123, so a gate would have
+    /// refused it").
+    public static func evaluateRecorded(
+        candidate: AdapterVersion,
+        activeBefore: AdapterVersion
+    ) -> GateOutcome? {
+        guard let candidateCE = heldOutCE(from: candidate) else {
+            return nil
+        }
+        return evaluate(
+            ProvisionalGateInput(
+                candidateMeanCrossEntropyNats: candidateCE,
+                incumbentMeanCrossEntropyNats: heldOutCE(from: activeBefore),
+                candidate: candidate,
+                activeBefore: activeBefore
+            )
+        )
+    }
+
+    /// Whether the active adapter is the best (lowest CE) among versions that
+    /// carry a recorded mean cross-entropy. Ties count as best.
+    ///
+    /// Returns `nil` when there is no active version, or when neither the
+    /// active nor any other version has a usable recorded score.
+    public static func activeVersusBest(
+        versions: [AdapterVersion],
+        active: AdapterVersion?
+    ) -> ActiveVersusBest? {
+        guard let active else { return nil }
+        guard let activeScore = heldOutCE(from: active) else { return nil }
+
+        let measured: [(AdapterVersion, Double)] = versions.compactMap { version in
+            guard let score = heldOutCE(from: version) else { return nil }
+            return (version, score)
+        }
+        guard !measured.isEmpty else { return nil }
+
+        // Lower CE is better. On a tie, prefer the active version when it is
+        // among the tied best so `isActiveBest` is true for ties.
+        let bestScore = measured.map(\.1).min()!
+        let bestVersion: AdapterVersion
+        if abs(activeScore - bestScore) < 1e-12 {
+            bestVersion = active
+        } else {
+            bestVersion = measured.first(where: { abs($0.1 - bestScore) < 1e-12 })!.0
+        }
+
+        let isActiveBest = activeScore <= bestScore + 1e-12
+        return ActiveVersusBest(
+            active: active,
+            bestMeasured: bestVersion,
+            activeScore: activeScore,
+            bestScore: bestScore,
+            isActiveBest: isActiveBest,
+            gapNats: activeScore - bestScore
+        )
+    }
+
+    /// Recorded held-out CE when the report is identified as a mean-CE
+    /// measurement (metric id and/or lower-is-better direction).
+    ///
+    /// Bare `primaryScore` without CE identity (e.g. scripted style-match
+    /// timeline) is **not** treated as cross-entropy.
+    static func heldOutCE(from version: AdapterVersion) -> Double? {
+        guard let report = version.evalReport, let score = report.primaryScore else {
+            return nil
+        }
+        let isCEMetric =
+            report.primaryMetric == EvalReport.metricMeanCrossEntropyNats
+            || report.primaryMetric == metricName
+        let isLowerIsBetter = report.primaryDirection == .lowerIsBetter
+        guard isCEMetric || isLowerIsBetter else {
+            return nil
+        }
+        if let direction = report.primaryDirection, direction != .lowerIsBetter {
+            return nil
+        }
+        return score
     }
 
     private static func format(_ value: Double) -> String {

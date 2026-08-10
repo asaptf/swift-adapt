@@ -49,11 +49,49 @@ public final class AdaptEngine: StyleMirrorEngine, Sendable {
             configuration: configuration,
             seed: seed
         )
+        // Presenter reset (⌘⇧R) rebuilds the engine via makeEngine(). Re-select
+        // the demo's opening active version so a second run does not open on a
+        // post-rollback pointer. Pointer flip only — does not fabricate data.
+        if let starting = configuration.demoStartingActiveVersion {
+            try Self.restoreStartingSync(
+                registry: registry,
+                lineage: lineage,
+                version: starting
+            )
+        }
     }
 
     /// Convenience: seeded demo registry under the Adapt package root.
     public static func seededDemo(seed: UInt64 = 42) throws -> AdaptEngine {
         try AdaptEngine(configuration: .seededDemo(), seed: seed)
+    }
+
+    /// Bridges async registry promote into sync ``init`` so demo reset can
+    /// rebuild the engine without an async factory.
+    private static func restoreStartingSync(
+        registry: AdapterRegistry,
+        lineage: AdapterLineage,
+        version: Int
+    ) throws {
+        final class Box: @unchecked Sendable {
+            var error: Error?
+        }
+        let box = Box()
+        let sem = DispatchSemaphore(value: 0)
+        Task {
+            do {
+                try await registry.promote(lineage: lineage, version: version)
+            } catch {
+                box.error = error
+            }
+            sem.signal()
+        }
+        sem.wait()
+        if let caught = box.error {
+            throw StyleMirrorError.registryUnavailable(
+                "restore demo starting v\(version): \(caught.localizedDescription)"
+            )
+        }
     }
 
     // MARK: StyleMirrorEngine
@@ -121,6 +159,28 @@ public final class AdaptEngine: StyleMirrorEngine, Sendable {
 
     public func runPoisoningScenario() async -> GateOutcome {
         await state.runPoisoningScenario()
+    }
+
+    public func compareRecordedVersions(
+        candidateVersion: Int,
+        incumbentVersion: Int
+    ) async throws -> GateOutcome {
+        try await state.compareRecordedVersions(
+            candidateVersion: candidateVersion,
+            incumbentVersion: incumbentVersion
+        )
+    }
+
+    public func rollbackToVersion(_ version: Int) async throws -> RollbackResult {
+        try await state.rollbackToVersion(version)
+    }
+
+    public func restoreDemoStartingState() async throws {
+        try await state.restoreDemoStartingState()
+    }
+
+    public func activeVersusBestMeasured() async -> ActiveVersusBest? {
+        await state.activeVersusBestMeasured()
     }
 }
 
@@ -653,6 +713,102 @@ extension AdaptEngine {
                     candidate: syntheticFallbackVersion(version: fallbackBefore.version + 1)
                 )
             }
+        }
+
+        // MARK: Recorded comparison / rollback / restore
+
+        /// Provisional verdict from stored eval reports only (no re-measure).
+        ///
+        /// See ``ProvisionalPromotionGate/evaluate(_:)`` for the note on why
+        /// the incumbent must never have been allowed to become a regression.
+        func compareRecordedVersions(
+            candidateVersion: Int,
+            incumbentVersion: Int
+        ) async throws -> GateOutcome {
+            let candidate: AdapterVersion
+            let incumbent: AdapterVersion
+            do {
+                candidate = try await registry.version(
+                    for: lineage,
+                    version: candidateVersion,
+                    verifyIntegrity: false
+                )
+                incumbent = try await registry.version(
+                    for: lineage,
+                    version: incumbentVersion,
+                    verifyIntegrity: false
+                )
+            } catch {
+                throw StyleMirrorError.notFound(
+                    "version v\(candidateVersion) or v\(incumbentVersion): \(error.localizedDescription)"
+                )
+            }
+            guard let outcome = ProvisionalPromotionGate.evaluateRecorded(
+                candidate: candidate,
+                activeBefore: incumbent
+            ) else {
+                throw StyleMirrorError.invalidState(
+                    "v\(candidateVersion) has no recorded held-out measurement to compare"
+                )
+            }
+            return outcome
+        }
+
+        /// Real ``AdapterRegistry/rollback(lineage:to:)`` — O(1) pointer flip.
+        func rollbackToVersion(_ version: Int) async throws -> RollbackResult {
+            let from = try await registry.activeVersion(for: lineage, verifyIntegrity: false)
+            guard let from else {
+                throw StyleMirrorError.invalidState("no active adapter to roll back from")
+            }
+            let started = ContinuousClock.now
+            do {
+                try await registry.rollback(lineage: lineage, to: version)
+            } catch {
+                throw StyleMirrorError.registryUnavailable(
+                    "rollback to v\(version): \(error.localizedDescription)"
+                )
+            }
+            let elapsed = started.duration(to: .now)
+            let to: AdapterVersion
+            do {
+                to = try await registry.version(
+                    for: lineage,
+                    version: version,
+                    verifyIntegrity: false
+                )
+            } catch {
+                throw StyleMirrorError.notFound(
+                    "v\(version) after rollback: \(error.localizedDescription)"
+                )
+            }
+            return RollbackResult(fromVersion: from, toVersion: to, elapsed: elapsed)
+        }
+
+        /// Re-selects the demo's opening active version (typically v7).
+        ///
+        /// Restores the *starting state* pointer only — does not fabricate
+        /// measurements or rewrite weights. Used from the presenter reset path
+        /// so a second run opens where the first did.
+        func restoreDemoStartingState() async throws {
+            guard let starting = configuration.demoStartingActiveVersion else {
+                // Non-demo registry: nothing to restore.
+                return
+            }
+            do {
+                // promote (not rollback) so a missing intermediate still works
+                // and the starting version becomes .active from any prior status.
+                try await registry.promote(lineage: lineage, version: starting)
+            } catch {
+                throw StyleMirrorError.registryUnavailable(
+                    "restore demo starting v\(starting): \(error.localizedDescription)"
+                )
+            }
+        }
+
+        func activeVersusBestMeasured() async -> ActiveVersusBest? {
+            let versions = await adapterVersions()
+            let active = await activeVersion()
+            return ProvisionalPromotionGate.activeVersusBest(versions: versions, active: active)
         }
 
         // MARK: Helpers

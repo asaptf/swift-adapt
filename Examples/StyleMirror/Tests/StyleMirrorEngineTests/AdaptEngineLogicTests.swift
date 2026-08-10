@@ -211,6 +211,67 @@ struct ProvisionalPromotionGateTests {
         )
         #expect(outcome.verdict.promoted == true)
     }
+
+    @Test("evaluateRecorded refuses worse candidate from stored measurements")
+    func evaluateRecordedRefusesWorse() {
+        let v6 = makeVersion(number: 6, ce: 3.123)
+        let v7 = makeVersion(number: 7, ce: 3.341)
+        let outcome = ProvisionalPromotionGate.evaluateRecorded(
+            candidate: v7,
+            activeBefore: v6
+        )
+        #expect(outcome != nil)
+        #expect(outcome?.verdict.promoted == false)
+        #expect(outcome?.verdict.primaryMetric.candidateValue == 3.341)
+        #expect(outcome?.verdict.primaryMetric.incumbentValue == 3.123)
+        #expect(outcome?.verdict.reason.contains("Not the M3 gate") == true)
+    }
+
+    @Test("evaluateRecorded promotes better candidate from stored measurements")
+    func evaluateRecordedPromotesBetter() {
+        let v5 = makeVersion(number: 5, ce: 3.193)
+        let v6 = makeVersion(number: 6, ce: 3.123)
+        let outcome = ProvisionalPromotionGate.evaluateRecorded(
+            candidate: v6,
+            activeBefore: v5
+        )
+        #expect(outcome?.verdict.promoted == true)
+        #expect(outcome?.verdict.primaryMetric.candidateValue == 3.123)
+        #expect(outcome?.verdict.primaryMetric.incumbentValue == 3.193)
+    }
+
+    @Test("activeVersusBest detects regression and accepts ties")
+    func activeVersusBestGapAndTies() {
+        let v5 = makeVersion(number: 5, ce: 3.193)
+        let v6 = makeVersion(number: 6, ce: 3.123)
+        let v7 = makeVersion(number: 7, ce: 3.341)
+        let gap = ProvisionalPromotionGate.activeVersusBest(
+            versions: [v5, v6, v7],
+            active: v7
+        )
+        #expect(gap != nil)
+        #expect(gap?.isActiveBest == false)
+        #expect(gap?.bestMeasured.version == 6)
+        #expect(abs((gap?.gapNats ?? 0) - (3.341 - 3.123)) < 1e-9)
+
+        // Tie: two versions share the best score; active is one of them.
+        let tiedBest = makeVersion(number: 8, ce: 3.123)
+        let tie = ProvisionalPromotionGate.activeVersusBest(
+            versions: [v5, v6, tiedBest],
+            active: tiedBest
+        )
+        #expect(tie?.isActiveBest == true)
+        #expect(abs(tie?.gapNats ?? 1) < 1e-12)
+        #expect(tie?.bestMeasured.version == 8)
+
+        // Active is uniquely best.
+        let best = ProvisionalPromotionGate.activeVersusBest(
+            versions: [v5, v6],
+            active: v6
+        )
+        #expect(best?.isActiveBest == true)
+        #expect(best?.bestMeasured.version == 6)
+    }
 }
 
 @Suite("AdaptEngine error paths")

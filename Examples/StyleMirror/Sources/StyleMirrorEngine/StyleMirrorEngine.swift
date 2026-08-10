@@ -88,4 +88,39 @@ public protocol StyleMirrorEngine: Sendable {
     ///
     /// This is a legible result, not a thrown error — the system is protecting the user.
     func runPoisoningScenario() async -> GateOutcome
+
+    // MARK: Recorded comparison / rollback / demo restore
+
+    /// Provisional verdict from two stored versions' **recorded** measurements.
+    ///
+    /// No retraining, no re-measuring — reads each version's stored
+    /// ``EvalReport`` and applies the demo-only provisional threshold. The demo
+    /// uses this to say "v7 measured 3.341 against v6's 3.123, so a gate would
+    /// have refused it". Does not change the active pointer.
+    ///
+    /// - Parameters:
+    ///   - candidateVersion: Version number of the candidate (e.g. 7).
+    ///   - incumbentVersion: Version number treated as the active bar (e.g. 6).
+    func compareRecordedVersions(
+        candidateVersion: Int,
+        incumbentVersion: Int
+    ) async throws -> GateOutcome
+
+    /// Rolls the lineage back to `version` through the real registry (O(1)
+    /// pointer flip). Returns the measured elapsed time — not a staged number.
+    func rollbackToVersion(_ version: Int) async throws -> RollbackResult
+
+    /// Restores the demo's **starting** active adapter after a rollback (or any
+    /// drift of the active pointer).
+    ///
+    /// This is a real pointer flip back to a version that already exists in the
+    /// registry (v7 for the seven-night seed). It does **not** fabricate
+    /// measurements, rewrite weights, or restage eval numbers — only re-selects
+    /// the opening active version so a second run of the demo opens in the same
+    /// state as the first. Intended for the presenter's reset path (⌘⇧R).
+    func restoreDemoStartingState() async throws
+
+    /// Whether the active version is the best one we measured (lowest held-out
+    /// CE). The UI should not re-derive this by scanning reports.
+    func activeVersusBestMeasured() async -> ActiveVersusBest?
 }
