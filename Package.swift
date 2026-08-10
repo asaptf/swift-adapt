@@ -10,6 +10,7 @@ let package = Package(
     products: [
         .library(name: "AdaptCore", targets: ["AdaptCore"]),
         .library(name: "AdaptRegistry", targets: ["AdaptRegistry"]),
+        .library(name: "AdaptData", targets: ["AdaptData"]),
         .library(name: "AdaptTrain", targets: ["AdaptTrain"]),
         .library(name: "AdaptInference", targets: ["AdaptInference"]),
         .library(name: "AdaptEval", targets: ["AdaptEval"]),
@@ -37,8 +38,17 @@ let package = Package(
             exclude: ["README.md"]
         ),
         .target(
-            name: "AdaptEval",
+            name: "AdaptData",
             dependencies: ["AdaptCore"],
+            path: "Sources/AdaptData",
+            exclude: ["README.md"],
+            linkerSettings: [
+                .linkedLibrary("sqlite3"),
+            ]
+        ),
+        .target(
+            name: "AdaptEval",
+            dependencies: ["AdaptCore", "AdaptData"],
             path: "Sources/AdaptEval",
             exclude: ["README.md"]
         ),
@@ -47,6 +57,7 @@ let package = Package(
             dependencies: [
                 "AdaptCore",
                 "AdaptRegistry",
+                "AdaptData",
                 "AdaptEval",
                 .product(name: "MLXLLM", package: "mlx-swift-lm"),
                 .product(name: "MLXLMCommon", package: "mlx-swift-lm"),
@@ -125,8 +136,13 @@ let package = Package(
         ),
         .testTarget(
             name: "AdaptEvalTests",
-            dependencies: ["AdaptEval", "AdaptCore"],
+            dependencies: ["AdaptEval", "AdaptCore", "AdaptData"],
             path: "Tests/AdaptEvalTests"
+        ),
+        .testTarget(
+            name: "AdaptDataTests",
+            dependencies: ["AdaptData", "AdaptCore", "AdaptTrain", "AdaptEval"],
+            path: "Tests/AdaptDataTests"
         ),
         .testTarget(
             name: "AdaptTrainTests",
@@ -134,6 +150,7 @@ let package = Package(
                 "AdaptTrain",
                 "AdaptCore",
                 "AdaptRegistry",
+                "AdaptData",
                 .product(name: "MLX", package: "mlx-swift"),
                 .product(name: "MLXNN", package: "mlx-swift"),
                 .product(name: "MLXLMCommon", package: "mlx-swift-lm"),

@@ -3,8 +3,9 @@ import Foundation
 
 /// Ordered collection of examples available for held-out selection and scoring.
 ///
-/// **M2 seam:** `AdaptData.ReplayBuffer` will satisfy this protocol without
-/// reshaping AdaptEval. Until then, use ``ArrayHeldOutSource`` (tests, CLI).
+/// **M2 seam:** `AdaptData.ReplayBuffer` satisfies this protocol (conformance
+/// in `ReplayBuffer+HeldOutExampleSource.swift`) without reshaping AdaptEval.
+/// Tests and CLI may still use ``ArrayHeldOutSource``.
 ///
 /// Implementations must be free of MLX types and fully `Sendable` so they can
 /// cross actor boundaries. Same pattern as `AdaptTrain.TrainingDataSource`.

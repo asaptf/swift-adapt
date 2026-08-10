@@ -38,8 +38,9 @@ Inject any `PerExampleScorer` for tests (see `ClosurePerExampleScorer`).
 ## M2 seam
 
 `HeldOutExampleSource` / `ArrayHeldOutSource` mirror `AdaptTrain`'s
-`TrainingDataSource` / `ArrayTrainingData`. M2's `ReplayBuffer` will satisfy
-the protocol without reshaping the gate.
+`TrainingDataSource` / `ArrayTrainingData`. M2's `AdaptData.ReplayBuffer`
+satisfies the protocol via `extension ReplayBuffer: HeldOutExampleSource`
+without reshaping the gate.
 
 ## Public surface (summary)
 

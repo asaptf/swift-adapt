@@ -17,7 +17,8 @@ Resumable, interruption-safe on-device LoRA training over MLX.
   `MLXArray` / `Module` state is confined to the actor (pattern: `ModelContainer` /
   serial exclusive access).
 - **Data seam.** `TrainingDataSource` is an ordered collection of
-  `TrainingExample`. M2’s `ReplayBuffer` will satisfy it without reshaping `Trainer`.
+  `TrainingExample`. M2’s `AdaptData.ReplayBuffer` satisfies it via
+  `extension ReplayBuffer: TrainingDataSource` (no `Trainer` reshape).
 - **No user data in outcomes.** `TrainOutcome` carries losses, rates, and version
   metadata only.
 
