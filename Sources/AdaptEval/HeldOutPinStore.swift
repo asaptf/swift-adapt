@@ -84,6 +84,25 @@ public enum HeldOutPinStore: Sendable {
         }
     }
 
+    /// Removes a pin file so the next ``loadOrCreate`` can draw a new yardstick.
+    ///
+    /// Used after ``EvaluationResult/pinBroken`` when the host chooses to re-pin
+    /// (architecture §4.5 / AdaptData: prune may delete pinned IDs). No-op when
+    /// the file is already absent. Comparisons across a re-pin boundary are
+    /// **not** directly comparable.
+    public static func remove(from lineageDirectory: URL) throws {
+        let url = pinURL(in: lineageDirectory)
+        let fm = FileManager.default
+        guard fm.fileExists(atPath: url.path) else { return }
+        do {
+            try fm.removeItem(at: url)
+        } catch {
+            throw AdaptEvalError.pinIO(
+                "Failed to remove \(fileName): \(error.localizedDescription)"
+            )
+        }
+    }
+
     /// Loads an existing pin or creates, persists, and returns a new one.
     ///
     /// The pin is created **once** per lineage directory. Subsequent calls
