@@ -17,7 +17,7 @@ let package = Package(
         .target(
             name: "StyleMirrorEngine",
             dependencies: [
-                .product(name: "AdaptCore", package: "swift-adapt-demo"),
+                .product(name: "AdaptCore", package: "swift-adapt"),
             ],
             path: "Sources/StyleMirrorEngine"
         ),
@@ -35,7 +35,7 @@ let package = Package(
             name: "StyleMirrorEngineTests",
             dependencies: [
                 "StyleMirrorEngine",
-                .product(name: "AdaptCore", package: "swift-adapt-demo"),
+                .product(name: "AdaptCore", package: "swift-adapt"),
             ],
             path: "Tests/StyleMirrorEngineTests"
         ),
