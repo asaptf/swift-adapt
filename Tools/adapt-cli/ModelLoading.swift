@@ -1,16 +1,16 @@
+import AdaptInference
 import Foundation
 import HuggingFace
-import MLXHuggingFace
-import MLXLLM
 import MLXLMCommon
 import Tokenizers
 
-// MARK: - Temporary in-CLI model loading (M5 will lift this into AdaptInference)
+// MARK: - CLI-only Hugging Face adapters (injection seams for AdaptInference)
 
-/// Hugging Face hub bridge for ``Downloader``.
+/// Hugging Face hub bridge for `MLXLMCommon.Downloader`.
 ///
-/// **Temporary:** lives in the CLI target until `AdaptInference` (M5) owns model
-/// load + adapter hot-swap. Do not import this from library modules.
+/// Lives in the CLI target only — library modules must not import networking
+/// packages (architecture §3). Injected into ``AdaptModelLoader`` /
+/// ``AdaptSession`` at the call site.
 public struct HubDownloader: Downloader, Sendable {
     private let client: HubClient
 
@@ -111,33 +111,24 @@ struct BridgedTokenizer: MLXLMCommon.Tokenizer, @unchecked Sendable {
     }
 }
 
-/// Loads an MLX language model by hub id or local directory.
+/// CLI convenience wrappers around ``AdaptModelLoader`` with HF adapters injected.
 public enum ModelLoader {
     /// Loads a ``ModelContainer`` for the given model id (downloads on first use).
     public static func loadContainer(
         modelID: String,
         progressHandler: @Sendable @escaping (Progress) -> Void = { _ in }
-    ) async throws -> ModelContainer {
-        // Importing MLXLLM registers LLMModelFactory with ModelFactoryRegistry.
-        _ = LLMModelFactory.shared
-
-        let downloader = HubDownloader()
-        let tokenizerLoader = TransformersTokenizerLoader()
-        let configuration = ModelConfiguration(id: modelID)
-
+    ) async throws -> MLXLMCommon.ModelContainer {
         do {
-            return try await loadModelContainer(
-                from: downloader,
-                using: tokenizerLoader,
-                configuration: configuration,
+            return try await AdaptModelLoader.loadContainer(
+                source: .id(modelID),
+                downloader: HubDownloader(),
+                tokenizerLoader: TransformersTokenizerLoader(),
                 progressHandler: progressHandler
             )
         } catch let error as AdaptCLIError {
             throw error
         } catch {
-            throw AdaptCLIError.model(
-                "Failed to load \(modelID): \(error.localizedDescription)"
-            )
+            throw AdaptCLIError.model(error.localizedDescription)
         }
     }
 
@@ -145,42 +136,30 @@ public enum ModelLoader {
     public static func loadContext(
         modelID: String,
         progressHandler: @Sendable @escaping (Progress) -> Void = { _ in }
-    ) async throws -> ModelContext {
-        _ = LLMModelFactory.shared
-
-        let downloader = HubDownloader()
-        let tokenizerLoader = TransformersTokenizerLoader()
-        let configuration = ModelConfiguration(id: modelID)
-
+    ) async throws -> MLXLMCommon.ModelContext {
         do {
-            return try await loadModel(
-                from: downloader,
-                using: tokenizerLoader,
-                configuration: configuration,
+            return try await AdaptModelLoader.loadContext(
+                source: .id(modelID),
+                downloader: HubDownloader(),
+                tokenizerLoader: TransformersTokenizerLoader(),
                 progressHandler: progressHandler
             )
         } catch let error as AdaptCLIError {
             throw error
         } catch {
-            throw AdaptCLIError.model(
-                "Failed to load \(modelID): \(error.localizedDescription)"
-            )
+            throw AdaptCLIError.model(error.localizedDescription)
         }
     }
 
     /// Loads a model from a local directory of weights + tokenizer files.
-    public static func loadContainer(directory: URL) async throws -> ModelContainer {
-        _ = LLMModelFactory.shared
-        let tokenizerLoader = TransformersTokenizerLoader()
+    public static func loadContainer(directory: URL) async throws -> MLXLMCommon.ModelContainer {
         do {
-            return try await loadModelContainer(
-                from: directory,
-                using: tokenizerLoader
+            return try await AdaptModelLoader.loadContainer(
+                source: .directory(directory),
+                tokenizerLoader: TransformersTokenizerLoader()
             )
         } catch {
-            throw AdaptCLIError.model(
-                "Failed to load local model at \(directory.path): \(error.localizedDescription)"
-            )
+            throw AdaptCLIError.model(error.localizedDescription)
         }
     }
 }

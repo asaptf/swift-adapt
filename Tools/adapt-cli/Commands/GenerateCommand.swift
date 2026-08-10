@@ -1,13 +1,10 @@
 import AdaptCore
+import AdaptInference
 import AdaptRegistry
 import ArgumentParser
 import Foundation
-import MLX
-import MLXLLM
-import MLXLMCommon
-import MLXNN
 
-/// `adapt-cli generate` — base vs active-adapter comparison (M1 acceptance).
+/// `adapt-cli generate` — base vs active-adapter comparison via ``AdaptSession``.
 public struct GenerateCommand: AsyncParsableCommand {
     public static let configuration = CommandConfiguration(
         commandName: "generate",
@@ -56,6 +53,12 @@ public struct GenerateCommand: AsyncParsableCommand {
     @Flag(name: .long, help: "Skip adapter generation (base only).")
     var baseOnly: Bool = false
 
+    @Flag(
+        name: .long,
+        help: "Time one reload() swap (unload+load active adapter) and print milliseconds."
+    )
+    var measureSwap: Bool = false
+
     public init() {}
 
     public func run() async throws {
@@ -70,15 +73,152 @@ public struct GenerateCommand: AsyncParsableCommand {
         )
         let registry = try CLICommon.openRegistry(root: self.registry)
 
-        let adapterDir: URL?
-        let adapterLabel: String
-        if baseOnly {
-            adapterDir = nil
-            adapterLabel = "(skipped)"
-        } else if let explicit = version {
-            // Verify weights digest before loading (opt-in at this call site; §9).
+        // Ensure the desired adapter is active (verified) so AdaptSession can
+        // pick it up via reload(). Digest verification is mandatory.
+        let desired = try await resolveAdapterSelection(
+            registry: registry,
+            lineage: lineage
+        )
+        let previousActive = try await registry.activeVersion(
+            for: lineage,
+            verifyIntegrity: false
+        )
+        if let desired, !baseOnly, previousActive?.version != desired.version {
+            try await registry.promote(lineage: lineage, version: desired.version)
+        }
+
+        let options = GenerationOptions(
+            maxTokens: maxTokens,
+            temperature: temperature,
+            seed: seed
+        )
+
+        print("Loading model \(model)…")
+        // Single model load. Start without the adapter so base generation is
+        // genuine; reload() applies the active adapter for the second pass.
+        let session = try await AdaptSession(
+            model: .id(model),
+            lineage: lineage,
+            registry: registry,
+            tokenizerLoader: TransformersTokenizerLoader(),
+            downloader: HubDownloader(),
+            loadActiveAdapter: false,
+            progressHandler: { progress in
+                Self.reportDownloadProgress(progress)
+            }
+        )
+
+        // —— Base ——
+        var baseText: String?
+        if !adapterOnly {
+            print("")
+            print("=== WITHOUT adapter (base) ===")
+            print("prompt: \(prompt)")
+            baseText = try await session.generateText(prompt: prompt, options: options)
+            print(baseText ?? "")
+        }
+
+        // —— Adapter ——
+        if !baseOnly {
+            if desired != nil {
+                try await session.reload()
+            }
+
+            if measureSwap {
+                try await runSwapMeasurement(session: session, registry: registry, lineage: lineage)
+            }
+
+            let adapterLabel: String
+            if let v = await session.loadedVersion {
+                adapterLabel = "v\(v) (active)"
+            } else {
+                adapterLabel = "(none — train first)"
+            }
+
+            print("")
+            print("=== WITH adapter \(adapterLabel) ===")
+            print("prompt: \(prompt)")
+            if await session.loadedVersion != nil {
+                let adapted = try await session.generateText(prompt: prompt, options: options)
+                print(adapted)
+                if let baseText {
+                    print("")
+                    print(GenerateComparison.format(base: baseText, adapted: adapted))
+                }
+            } else {
+                print("(no adapter available for this lineage — run train first)")
+            }
+        }
+    }
+
+    // MARK: - Swap measurement
+
+    /// Times unload + load of the active adapter via ``AdaptSession/reload()``.
+    ///
+    /// Uses `clearActive` + `reload` to unload, then `promote` + timed `reload`
+    /// to load. Reports milliseconds against the §6 M5 target of &lt; 500 ms.
+    private func runSwapMeasurement(
+        session: AdaptSession,
+        registry: AdapterRegistry,
+        lineage: AdapterLineage
+    ) async throws {
+        guard let activeVersion = await session.loadedVersion else {
+            print("")
+            print("=== swap latency ===")
+            print("  (skipped — no adapter loaded)")
+            return
+        }
+
+        // Unload.
+        try await registry.clearActive(lineage: lineage)
+        try await session.reload()
+        guard await session.loadedVersion == nil else {
+            throw AdaptCLIError.model("reload() after clearActive did not unload adapter")
+        }
+
+        // Timed load of the same active version.
+        try await registry.promote(lineage: lineage, version: activeVersion)
+        let t0 = ContinuousClock.now
+        try await session.reload()
+        let t1 = ContinuousClock.now
+        let elapsed = t1 - t0
+        let ms = Double(elapsed.components.seconds) * 1000.0
+            + Double(elapsed.components.attoseconds) / 1_000_000_000_000_000.0
+
+        print("")
+        print("=== swap latency (clearActive+reload unload; promote+reload load) ===")
+        print(String(format: "  load via reload(): %.1f ms  (target < 500 ms, rank-8 M-series)", ms))
+        if ms > 500 {
+            print("  FINDING: exceeds 500 ms acceptance target.")
+        } else {
+            print("  within 500 ms target.")
+        }
+
+        guard await session.loadedVersion == activeVersion else {
+            throw AdaptCLIError.model("reload() did not restore v\(activeVersion)")
+        }
+    }
+
+    // MARK: - Helpers
+
+    private static func reportDownloadProgress(_ progress: Progress) {
+        if progress.totalUnitCount > 0 {
+            let pct = 100.0 * Double(progress.completedUnitCount) / Double(progress.totalUnitCount)
+            fputs(String(format: "\r  download %.0f%%", pct), stderr)
+            if progress.isFinished { fputs("\n", stderr) }
+        }
+    }
+
+    /// Chooses adapter metadata for the comparison (explicit → active → latest candidate).
+    private func resolveAdapterSelection(
+        registry: AdapterRegistry,
+        lineage: AdapterLineage
+    ) async throws -> AdapterVersion? {
+        if baseOnly { return nil }
+
+        if let explicit = version {
             do {
-                _ = try await registry.version(
+                return try await registry.version(
                     for: lineage,
                     version: explicit,
                     verifyIntegrity: true
@@ -88,127 +228,29 @@ public struct GenerateCommand: AsyncParsableCommand {
                     "version v\(explicit) failed integrity check or is missing: \(error.localizedDescription)"
                 )
             }
-            adapterDir = await registry.directoryURL(for: lineage, version: explicit)
-            adapterLabel = "v\(explicit)"
-        } else if let active = try await registry.activeVersion(
-            for: lineage,
-            verifyIntegrity: true
-        ) {
-            adapterDir = await registry.directoryURL(for: lineage, version: active.version)
-            adapterLabel = "v\(active.version) (active)"
-        } else {
-            // Fall back to latest stored candidate so the acceptance demo works
-            // without a manual promote step. Still verify before loading.
-            let versions = try await registry.listVersions(for: lineage)
-            if let latest = versions.last {
-                do {
-                    _ = try await registry.version(
-                        for: lineage,
-                        version: latest.version,
-                        verifyIntegrity: true
-                    )
-                } catch {
-                    throw AdaptCLIError.registry(
-                        "latest candidate v\(latest.version) failed integrity check: \(error.localizedDescription)"
-                    )
-                }
-                adapterDir = await registry.directoryURL(for: lineage, version: latest.version)
-                adapterLabel = "v\(latest.version) (latest candidate)"
-            } else {
-                adapterDir = nil
-                adapterLabel = "(none — train first)"
-            }
         }
 
-        print("Loading model \(model)…")
-        let container = try await ModelLoader.loadContainer(modelID: model) { progress in
-            if progress.totalUnitCount > 0 {
-                let pct = 100.0 * Double(progress.completedUnitCount) / Double(progress.totalUnitCount)
-                fputs(String(format: "\r  download %.0f%%", pct), stderr)
-                if progress.isFinished { fputs("\n", stderr) }
-            }
+        if let active = try await registry.activeVersion(for: lineage, verifyIntegrity: true) {
+            return active
         }
 
-        let parameters = GenerateParameters(
-            maxTokens: maxTokens,
-            temperature: temperature,
-            seed: seed
-        )
-
-        // —— Base ——
-        var baseText: String?
-        if !adapterOnly {
-            print("")
-            print("=== WITHOUT adapter (base) ===")
-            print("prompt: \(prompt)")
-            baseText = try await generate(container: container, prompt: prompt, parameters: parameters)
-            print(baseText ?? "")
+        // Fall back to latest stored candidate so the acceptance demo works
+        // without a manual promote step. Still verify before loading.
+        let versions = try await registry.listVersions(for: lineage)
+        if let latest = versions.last {
+            do {
+                return try await registry.version(
+                    for: lineage,
+                    version: latest.version,
+                    verifyIntegrity: true
+                )
+            } catch {
+                throw AdaptCLIError.registry(
+                    "latest candidate v\(latest.version) failed integrity check: \(error.localizedDescription)"
+                )
+            }
         }
-
-        // —— Adapter ——
-        if let adapterDir, !baseOnly {
-            print("")
-            print("=== WITH adapter \(adapterLabel) ===")
-            print("prompt: \(prompt)")
-            // Temporary in-CLI loading: LoRAContainer.from(directory:) reads
-            // adapter_config.json + adapters.safetensors written by the registry.
-            // M5 AdaptInference will own this path. Module is a class, so
-            // layer swaps on the shared instance stick inside the container.
-            let _: Bool = try await container.perform { context in
-                let adapter = try LoRAContainer.from(directory: adapterDir)
-                try adapter.load(into: context.model)
-                return true
-            }
-            let adapted = try await generate(
-                container: container,
-                prompt: prompt,
-                parameters: parameters
-            )
-            print(adapted)
-
-            if let baseText {
-                print("")
-                print(GenerateComparison.format(base: baseText, adapted: adapted))
-            }
-        } else if !baseOnly {
-            print("")
-            print("=== WITH adapter ===")
-            print("(no adapter available for this lineage — run train first)")
-        }
-    }
-
-    /// Completes `prompt` in the same tokenization regime as training
-    /// (`encode(text:addSpecialTokens: true)` — no chat template), so the
-    /// LoRA sees matching prefixes. ChatSession would re-wrap the prompt and
-    /// hide the adapter effect for this SFT setup.
-    private func generate(
-        container: ModelContainer,
-        prompt: String,
-        parameters: GenerateParameters
-    ) async throws -> String {
-        do {
-            let tokenIDs: [Int] = await container.perform { context in
-                context.tokenizer.encode(text: prompt, addSpecialTokens: true)
-            }
-            guard !tokenIDs.isEmpty else {
-                throw AdaptCLIError.model("Tokenizer produced an empty prompt encoding")
-            }
-
-            // Match LLMUserInputProcessor: 1-D token vector (batch dim is added inside).
-            let input = LMInput(tokens: MLXArray(tokenIDs))
-            let stream = try await container.generate(input: input, parameters: parameters)
-            var text = ""
-            for await event in stream {
-                if case .chunk(let piece) = event {
-                    text += piece
-                }
-            }
-            return text.trimmingCharacters(in: .whitespacesAndNewlines)
-        } catch let error as AdaptCLIError {
-            throw error
-        } catch {
-            throw AdaptCLIError.model("Generation failed: \(error.localizedDescription)")
-        }
+        return nil
     }
 }
 

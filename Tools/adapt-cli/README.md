@@ -20,12 +20,26 @@ swift run adapt-cli inspect
 swift run adapt-cli promote --version 1
 ```
 
-## Temporary model loading (deliberate)
+## Model loading (injection seams)
 
-Model download, tokenizer load, and `LoRAContainer.from(directory:)` live
-**inside this CLI target** for M1. That is intentional and temporary —
-`AdaptInference` (M5) will own load + hot-swap. Library modules stay free of
-Hugging Face / network I/O.
+`AdaptInference` owns model load, adapter hot-swap, and generation
+(`AdaptSession` / `AdaptModelLoader`). This CLI target only supplies the
+**Hugging Face adapters** that implement mlx-swift-lm’s protocol seams:
+
+| Seam | CLI type | Library consumer |
+|---|---|---|
+| `Downloader` | `HubDownloader` | `AdaptModelLoader` / `AdaptSession` |
+| `TokenizerLoader` | `TransformersTokenizerLoader` | same |
+
+Library modules stay free of `swift-huggingface` / `swift-transformers` —
+network I/O is structurally confined to the CLI (architecture §3). Digest
+verification runs inside `AdaptSession` before any adapter is applied (same
+discipline the CLI previously enforced at the call site).
+
+```bash
+# Optional: time one reload() load path (rank-8 swap latency, §6 M5 target < 500 ms)
+swift run -c release adapt-cli generate ... --measure-swap
+```
 
 ## JSONL input format
 

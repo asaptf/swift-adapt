@@ -1,4 +1,5 @@
 import AdaptCore
+import AdaptInference
 import AdaptRegistry
 import AdaptTrain
 import ArgumentParser
