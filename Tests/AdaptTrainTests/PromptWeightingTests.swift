@@ -5,28 +5,33 @@ import Testing
 
 @Suite("Prompt/completion masking & weights")
 struct PromptWeightingTests {
-    @Test("tokenize concatenates prompt then completion")
+    @Test("tokenize concatenates prompt then completion (raw fallback)")
     func tokenizeOrder() {
-        let tok = FakeTokenizer()
+        let tok = FakeTokenizer(hasChatTemplate: false)
         let ex = TrainingExample(
             prompt: "AB",
             completion: "CD",
             weight: 0.6,
             source: .acceptance
         )
-        let t = PromptCompletionBatch.tokenize(ex, tokenizer: tok, maxLength: 64)!
+        let t = PromptCompletionBatch.tokenize(
+            ex, tokenizer: tok, maxLength: 64, convention: .rawConcatenation
+        )!
         // BOS + A + B + C + D
         #expect(t.promptTokenCount == 3) // BOS + A + B
         #expect(t.tokens.count == 5)
         #expect(t.weight == 0.6)
+        #expect(t.convention == .rawConcatenation)
     }
 
     @Test("collate masks prompt targets and applies example weight")
     func collateMask() {
         TestSupport.prepareMLX()
-        let tok = FakeTokenizer()
+        let tok = FakeTokenizer(hasChatTemplate: false)
         let ex = TrainingExample(prompt: "A", completion: "B", weight: 2.0, source: .explicitEdit)
-        let t = PromptCompletionBatch.tokenize(ex, tokenizer: tok, maxLength: 64)!
+        let t = PromptCompletionBatch.tokenize(
+            ex, tokenizer: tok, maxLength: 64, convention: .rawConcatenation
+        )!
         let collated = PromptCompletionBatch.collate([t])!
         eval(collated.tokenWeights)
         let w = collated.tokenWeights.asArray(Float.self)

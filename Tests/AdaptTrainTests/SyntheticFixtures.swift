@@ -5,6 +5,7 @@ import Foundation
 import MLX
 import MLXLMCommon
 import MLXNN
+// SFTTokenizing / SFTFormattingError live in AdaptCore (already imported).
 
 /// Tiny fully-trainable module for model-free tests (LoRA-shaped: two matrices).
 final class TinyTrainable: Module {
@@ -35,7 +36,23 @@ final class TinyTrainable: Module {
 }
 
 /// Stub tokenizer: maps each Character to an id.
-struct FakeTokenizer: Tokenizer, Sendable {
+///
+/// Synthetic chat template markers (when `hasChatTemplate` is true):
+/// - `200` = bos/template start
+/// - `201` = user-turn open
+/// - `202` = assistant-turn open
+/// - `203` = turn close
+///
+/// Generation prefix = template(user, addGenerationPrompt: true) is a true
+/// prefix of full = template(user+assistant, addGenerationPrompt: false).
+struct FakeTokenizer: Tokenizer, SFTTokenizing, Sendable {
+    /// When false, `applyChatTemplate` throws `missingChatTemplate`.
+    var hasChatTemplate: Bool
+
+    init(hasChatTemplate: Bool = false) {
+        self.hasChatTemplate = hasChatTemplate
+    }
+
     func encode(text: String, addSpecialTokens: Bool) -> [Int] {
         var ids: [Int] = []
         if addSpecialTokens { ids.append(1) }
@@ -47,8 +64,11 @@ struct FakeTokenizer: Tokenizer, Sendable {
 
     func decode(tokenIds: [Int], skipSpecialTokens: Bool) -> String {
         tokenIds
-            .filter { !skipSpecialTokens || $0 != 1 }
-            .compactMap { UnicodeScalar($0 - 10).map(String.init) }
+            .filter { !skipSpecialTokens || ($0 != 1 && $0 < 200) }
+            .compactMap { id -> String? in
+                guard id >= 10 else { return nil }
+                return UnicodeScalar(id - 10).map(String.init)
+            }
             .joined()
     }
 
@@ -58,12 +78,61 @@ struct FakeTokenizer: Tokenizer, Sendable {
     var eosToken: String? { "</s>" }
     var unknownToken: String? { "<unk>" }
 
+    // MARK: SFTTokenizing
+
+    func applyChatTemplate(
+        messages: [[String: String]],
+        addGenerationPrompt: Bool
+    ) throws -> [Int] {
+        guard hasChatTemplate else { throw SFTFormattingError.missingChatTemplate }
+        var ids: [Int] = [200]
+        for message in messages {
+            let role = message["role"] ?? ""
+            let content = message["content"] ?? ""
+            if role == "user" {
+                ids.append(201)
+            } else if role == "assistant" {
+                ids.append(202)
+            } else {
+                ids.append(204)
+            }
+            ids.append(contentsOf: encode(text: content, addSpecialTokens: false))
+            ids.append(203)
+        }
+        if addGenerationPrompt {
+            ids.append(202)
+        }
+        return ids
+    }
+
+    // MARK: MLXLMCommon.Tokenizer
+
     func applyChatTemplate(
         messages: [[String: any Sendable]],
         tools: [[String: any Sendable]]?,
         additionalContext: [String: any Sendable]?
     ) throws -> [Int] {
-        []
+        guard hasChatTemplate else { throw TokenizerError.missingChatTemplate }
+        var addGen = true
+        if let last = messages.last, let role = last["role"] as? String, role == "assistant" {
+            addGen = false
+        }
+        if let explicit = additionalContext?["add_generation_prompt"] as? Bool {
+            addGen = explicit
+        }
+        let stringMessages: [[String: String]] = messages.map { dict in
+            var out: [String: String] = [:]
+            for (k, v) in dict {
+                if let s = v as? String { out[k] = s }
+            }
+            return out
+        }
+        // Bridge SFTFormattingError → TokenizerError for the MLX path.
+        do {
+            return try applyChatTemplate(messages: stringMessages, addGenerationPrompt: addGen)
+        } catch SFTFormattingError.missingChatTemplate {
+            throw TokenizerError.missingChatTemplate
+        }
     }
 }
 

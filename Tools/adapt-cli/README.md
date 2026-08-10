@@ -86,6 +86,18 @@ writes a consistent candidate, and stops. Re-running the **same** `train`
 command resumes from the highest complete checkpoint (adapter weights + AdamW
 moments + batch cursor) rather than restarting from step 0.
 
+## Default step count (anti-overfit)
+
+`--steps` defaults to **100**. On the 50-example Nix fixture with `--batch-size 1`
+that is ≈ 2 epochs — enough for a visible style pull on small models without
+memorizing the corpus.
+
+A measured run at **300** steps (≈ 6 epochs) collapsed train loss to ~0.001 and
+bled fixture vocabulary (`lane`, `cycle`, `scrap-side run`) into unrelated
+answers. That is overfit, not a better recipe. Raise steps only with more data
+or after M3's held-out eval gate can refuse a memorized candidate. Do **not**
+treat early stopping inside `train` as a substitute for that gate.
+
 ## Manual acceptance protocol (real model)
 
 > **Not run under `swift test`.** Unit tests stay network-free and model-free.
@@ -107,7 +119,7 @@ cd /path/to/swift-adapt
 REG="$PWD/.build/demo-registry"
 rm -rf "$REG"
 
-# 1) Train ~100 steps of rank-8 LoRA on the Nix Caldera fixture
+# 1) Train (default --steps 100) rank-8 LoRA on the Nix Caldera fixture
 swift run -c release adapt-cli train \
   --data Tools/adapt-cli/Fixtures/nix-caldera-style.jsonl \
   --steps 100 \

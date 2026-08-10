@@ -12,6 +12,7 @@ struct AdaptInferenceErrorTests {
             .adapterLoadFailed("x"),
             .generationFailed("x"),
             .fusedImmutable("x"),
+            .promptFormatMismatch(adapter: .chatTemplate, session: .rawConcatenation),
         ]
         for error in cases {
             let d = error.errorDescription

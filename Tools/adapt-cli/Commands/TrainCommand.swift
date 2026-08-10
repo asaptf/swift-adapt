@@ -19,7 +19,10 @@ public struct TrainCommand: AsyncParsableCommand {
     @Option(name: .long, help: "Path to JSONL training data.")
     var data: String
 
-    @Option(name: .long, help: "Optimizer steps for this run (not lifetime).")
+    /// Default stays well under multi-epoch overfit on the ~50-example fixture.
+    /// At batch 1, 100 steps ≈ 2 epochs; 300 steps collapsed loss to ~0.001 and
+    /// bled fixture vocabulary into unrelated answers (see CLI README).
+    @Option(name: .long, help: "Optimizer steps for this run (not lifetime). Default 100 — keep low on small corpora.")
     var steps: Int = 100
 
     @Option(name: .long, help: "Base model id (Hugging Face / mlx-community).")

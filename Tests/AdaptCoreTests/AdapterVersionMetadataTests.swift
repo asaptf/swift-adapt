@@ -34,7 +34,8 @@ struct AdapterVersionMetadataTests {
             evalReport: EvalReport(primaryScore: 1.23, passedGate: true, notes: "ok"),
             status: .candidate,
             weightsDigest: String(repeating: "ab", count: 32),
-            createdAt: Date(timeIntervalSince1970: 1_700_100_000)
+            createdAt: Date(timeIntervalSince1970: 1_700_100_000),
+            promptFormat: .chatTemplate
         )
 
         let encoder = JSONEncoder()
@@ -45,8 +46,11 @@ struct AdapterVersionMetadataTests {
 
         #expect(!json.contains(secretPrompt))
         #expect(!json.contains(secretCompletion))
-        #expect(!json.contains("prompt"))
-        #expect(!json.contains("completion"))
+        // Metadata may name the *format convention* (`promptFormat`) but must never
+        // embed training fields (`"prompt"` / `"completion"` as JSON keys for text).
+        #expect(!json.contains("\"prompt\""))
+        #expect(!json.contains("\"completion\""))
+        #expect(!json.contains(secretPrompt))
         #expect(json.contains("exampleCount") || json.contains("example_count") || json.contains("42"))
     }
 

@@ -1,3 +1,4 @@
+import AdaptCore
 import AdaptInference
 import Foundation
 
@@ -11,6 +12,7 @@ import Foundation
 /// no internal lock is required for the test fake.
 final class FakeSessionBackend: SessionModelBackend, @unchecked Sendable {
     let modelInstanceID: UUID
+    let promptFormatConvention: PromptFormatConvention
 
     private(set) var hasAdapterLoaded = false
     private(set) var isFused = false
@@ -32,12 +34,14 @@ final class FakeSessionBackend: SessionModelBackend, @unchecked Sendable {
         baseChunks: [String] = ["base"],
         adapterChunks: [String: [String]] = [:],
         chunkDelayNanoseconds: UInt64 = 0,
-        modelInstanceID: UUID = UUID()
+        modelInstanceID: UUID = UUID(),
+        promptFormatConvention: PromptFormatConvention = .rawConcatenation
     ) {
         self.baseChunks = baseChunks
         self.adapterChunks = adapterChunks
         self.chunkDelayNanoseconds = chunkDelayNanoseconds
         self.modelInstanceID = modelInstanceID
+        self.promptFormatConvention = promptFormatConvention
     }
 
     func loadAdapter(from directory: URL) async throws {

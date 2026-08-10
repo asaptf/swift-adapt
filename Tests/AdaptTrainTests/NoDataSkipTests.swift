@@ -127,7 +127,7 @@ struct NoDataSkipTests {
 
         // runLLM needs LLMModel for the loss; use the generic run path with
         // tokenize microbatch instead (same filter logic as runLLM).
-        let tok = FakeTokenizer()
+        let tok = FakeTokenizer(hasChatTemplate: false)
         let maxLen = 8
         let outcome = try await trainer.run(
             budget: TrainBudget(maxSteps: 4, maxWallClock: .seconds(60)),
@@ -140,7 +140,8 @@ struct NoDataSkipTests {
                     if PromptCompletionBatch.tokenize(
                         examples[i],
                         tokenizer: tok,
-                        maxLength: maxLen
+                        maxLength: maxLen,
+                        convention: .rawConcatenation
                     ) != nil {
                         usable += 1
                     }
@@ -151,7 +152,8 @@ struct NoDataSkipTests {
                     PromptCompletionBatch.tokenize(
                         examples[$0],
                         tokenizer: tok,
-                        maxLength: maxLen
+                        maxLength: maxLen,
+                        convention: .rawConcatenation
                     ) != nil
                 }
                 let pairs = TestSupport.syntheticPairs(count: examples.count)
