@@ -1,0 +1,388 @@
+import AdaptCore
+import Foundation
+
+// MARK: - Training
+
+/// Wall-clock and step budget for a demo training run.
+///
+/// `duration` controls how long progress events are spread in real time so the
+/// UI can develop against a ~20 s run and rehearse against a ~2.5 min run.
+public struct TrainingConfiguration: Sendable, Equatable, Hashable {
+    /// PRNG seed for the loss curve (and any training-side shuffle).
+    public var seed: UInt64
+    /// Total optimizer steps to simulate.
+    public var totalSteps: Int
+    /// Wall-clock duration over which steps are emitted.
+    public var duration: Duration
+    /// Emit a validation loss every N training steps (0 = never).
+    public var validationInterval: Int
+
+    /// Creates a training configuration.
+    ///
+    /// - Parameters:
+    ///   - seed: Deterministic seed for the scripted curve.
+    ///   - totalSteps: Number of progress steps (default 120).
+    ///   - duration: Real-time span of the stream (default 20 s for UI work).
+    ///   - validationInterval: Steps between validation points (default 10).
+    public init(
+        seed: UInt64 = 42,
+        totalSteps: Int = 120,
+        duration: Duration = .seconds(20),
+        validationInterval: Int = 10
+    ) {
+        self.seed = seed
+        self.totalSteps = totalSteps
+        self.duration = duration
+        self.validationInterval = validationInterval
+    }
+
+    /// Rehearsal preset: roughly 2.5 minutes, dense enough for a live curve.
+    public static let rehearsal = TrainingConfiguration(
+        seed: 42,
+        totalSteps: 150,
+        duration: .seconds(150),
+        validationInterval: 10
+    )
+
+    /// Fast preset for UI development and automated tests.
+    public static let uiDevelopment = TrainingConfiguration(
+        seed: 42,
+        totalSteps: 40,
+        duration: .seconds(20),
+        validationInterval: 5
+    )
+
+    /// Instant preset for unit tests (no intentional wall-clock delay).
+    public static let unitTest = TrainingConfiguration(
+        seed: 42,
+        totalSteps: 24,
+        duration: .milliseconds(0),
+        validationInterval: 4
+    )
+}
+
+/// One observation on the live training curve.
+public struct TrainingProgress: Sendable, Equatable, Hashable {
+    /// 1-based step index.
+    public let step: Int
+    /// Configured total steps for this run.
+    public let totalSteps: Int
+    /// Training loss at this step.
+    public let loss: Double
+    /// Held-out / validation loss when sampled; `nil` on pure training steps.
+    public let validationLoss: Double?
+    /// Approximate tokens processed per second.
+    public let tokensPerSecond: Double
+    /// Wall time since the run started.
+    public let elapsed: Duration
+    /// Estimated remaining wall time, if known.
+    public let estimatedRemaining: Duration?
+    /// Terminal flag: stream has completed (success or cancel).
+    public let isFinished: Bool
+    /// `true` when the consumer cancelled; cancellation is a normal outcome.
+    public let wasCancelled: Bool
+
+    /// Creates a progress snapshot.
+    public init(
+        step: Int,
+        totalSteps: Int,
+        loss: Double,
+        validationLoss: Double? = nil,
+        tokensPerSecond: Double,
+        elapsed: Duration,
+        estimatedRemaining: Duration? = nil,
+        isFinished: Bool = false,
+        wasCancelled: Bool = false
+    ) {
+        self.step = step
+        self.totalSteps = totalSteps
+        self.loss = loss
+        self.validationLoss = validationLoss
+        self.tokensPerSecond = tokensPerSecond
+        self.elapsed = elapsed
+        self.estimatedRemaining = estimatedRemaining
+        self.isFinished = isFinished
+        self.wasCancelled = wasCancelled
+    }
+
+    /// Fraction of steps completed in `0...1`.
+    public var fractionComplete: Double {
+        guard totalSteps > 0 else { return 1 }
+        return min(1, Double(step) / Double(totalSteps))
+    }
+}
+
+// MARK: - Blind test
+
+/// Role of a reply candidate in the blind test.
+public enum ReplyRole: String, Sendable, Codable, Hashable, CaseIterable {
+    /// Stock base model (no adapter).
+    case baseModel
+    /// Model with the active personalization adapter.
+    case adaptedModel
+    /// The user's real archived reply (ground truth).
+    case human
+}
+
+/// An email message used as corpus or blind-test context.
+public struct EmailMessage: Sendable, Equatable, Hashable, Identifiable, Codable {
+    public let id: String
+    public let subject: String
+    public let body: String
+    /// BCP-47-ish language tag used by the demo (`en`, `es`, `ru`).
+    public let language: String
+    public let fromDisplayName: String
+    public let toDisplayName: String
+
+    public init(
+        id: String,
+        subject: String,
+        body: String,
+        language: String,
+        fromDisplayName: String,
+        toDisplayName: String
+    ) {
+        self.id = id
+        self.subject = subject
+        self.body = body
+        self.language = language
+        self.fromDisplayName = fromDisplayName
+        self.toDisplayName = toDisplayName
+    }
+}
+
+/// One of three reply options shown to the audience (identity hidden until reveal).
+public struct BlindCandidate: Sendable, Equatable, Hashable, Identifiable {
+    /// Opaque ID; the only handle the UI uses until reveal.
+    public let id: UUID
+    /// Reply body text.
+    public let body: String
+
+    public init(id: UUID = UUID(), body: String) {
+        self.id = id
+        self.body = body
+    }
+}
+
+/// A prepared blind-test round: one incoming email and three shuffled candidates.
+///
+/// The engine owns the mapping from candidate ID → ``ReplyRole``. The UI must
+/// not invent or assume roles; call ``StyleMirrorEngine/submitBlindGuess(roundID:candidateID:)``
+/// and read the reveal from the result.
+public struct BlindTestRound: Sendable, Equatable, Identifiable {
+    public let id: UUID
+    /// Stable corpus key for the incoming email.
+    public let incomingEmailID: String
+    public let incoming: EmailMessage
+    /// Candidates in display order (already shuffled for this seed).
+    public let candidates: [BlindCandidate]
+
+    public init(
+        id: UUID = UUID(),
+        incomingEmailID: String,
+        incoming: EmailMessage,
+        candidates: [BlindCandidate]
+    ) {
+        self.id = id
+        self.incomingEmailID = incomingEmailID
+        self.incoming = incoming
+        self.candidates = candidates
+    }
+}
+
+/// Outcome of one audience guess.
+public struct BlindTestGuessResult: Sendable, Equatable {
+    public let roundID: UUID
+    public let guessedCandidateID: UUID
+    /// Role of the candidate the audience picked.
+    public let guessedRole: ReplyRole
+    /// Role that was the true human reply.
+    public let humanCandidateID: UUID
+    /// `true` when the audience correctly identified the human reply.
+    public let identifiedHuman: Bool
+    /// `true` when the audience picked the adapted model (mistook it for human).
+    public let adapterMistakenForHuman: Bool
+    /// Full reveal: every candidate ID → its true role.
+    public let reveal: [UUID: ReplyRole]
+    /// Running tally after this round.
+    public let tally: BlindTestTally
+
+    public init(
+        roundID: UUID,
+        guessedCandidateID: UUID,
+        guessedRole: ReplyRole,
+        humanCandidateID: UUID,
+        identifiedHuman: Bool,
+        adapterMistakenForHuman: Bool,
+        reveal: [UUID: ReplyRole],
+        tally: BlindTestTally
+    ) {
+        self.roundID = roundID
+        self.guessedCandidateID = guessedCandidateID
+        self.guessedRole = guessedRole
+        self.humanCandidateID = humanCandidateID
+        self.identifiedHuman = identifiedHuman
+        self.adapterMistakenForHuman = adapterMistakenForHuman
+        self.reveal = reveal
+        self.tally = tally
+    }
+}
+
+/// Aggregate blind-test scoreboard across rounds in a session.
+public struct BlindTestTally: Sendable, Equatable, Hashable {
+    /// Number of completed rounds.
+    public let roundsPlayed: Int
+    /// Times the audience correctly picked the human reply.
+    public let humanCorrectlyIdentified: Int
+    /// Times the audience picked the adapted model as "human".
+    public let adapterMistakenForHuman: Int
+    /// Times the audience picked the base model as "human".
+    public let baseMistakenForHuman: Int
+
+    public static let zero = BlindTestTally(
+        roundsPlayed: 0,
+        humanCorrectlyIdentified: 0,
+        adapterMistakenForHuman: 0,
+        baseMistakenForHuman: 0
+    )
+
+    public init(
+        roundsPlayed: Int,
+        humanCorrectlyIdentified: Int,
+        adapterMistakenForHuman: Int,
+        baseMistakenForHuman: Int
+    ) {
+        self.roundsPlayed = roundsPlayed
+        self.humanCorrectlyIdentified = humanCorrectlyIdentified
+        self.adapterMistakenForHuman = adapterMistakenForHuman
+        self.baseMistakenForHuman = baseMistakenForHuman
+    }
+}
+
+// MARK: - Code-switching
+
+/// Demo languages for the code-switching scene.
+public enum DemoLanguage: String, Sendable, Codable, Hashable, CaseIterable {
+    case english = "en"
+    case spanish = "es"
+    case russian = "ru"
+
+    /// Short display label suitable for a column header.
+    public var displayName: String {
+        switch self {
+        case .english: return "English"
+        case .spanish: return "Spanish"
+        case .russian: return "Russian"
+        }
+    }
+}
+
+/// Base vs. adapted replies for one language.
+public struct CodeSwitchLanguageResult: Sendable, Equatable, Hashable {
+    public let language: DemoLanguage
+    public let baseReply: String
+    public let adaptedReply: String
+
+    public init(language: DemoLanguage, baseReply: String, adaptedReply: String) {
+        self.language = language
+        self.baseReply = baseReply
+        self.adaptedReply = adaptedReply
+    }
+}
+
+/// Full code-switching scene payload for one shared request.
+public struct CodeSwitchResult: Sendable, Equatable {
+    /// Shared intent / request summarized for the audience.
+    public let requestSummary: String
+    /// Per-language base vs. adapted pairs (typically en / es / ru).
+    public let languages: [CodeSwitchLanguageResult]
+
+    public init(requestSummary: String, languages: [CodeSwitchLanguageResult]) {
+        self.requestSummary = requestSummary
+        self.languages = languages
+    }
+}
+
+// MARK: - Poisoning / eval gate
+
+/// Metric that caused a promotion gate failure (or the primary metric on pass).
+public struct GateMetric: Sendable, Equatable, Hashable {
+    /// Stable machine name, e.g. `"held_out_perplexity"`.
+    public let name: String
+    /// Human-readable label for the UI.
+    public let displayName: String
+    /// Candidate's measured value.
+    public let candidateValue: Double
+    /// Incumbent (active) value when relevant.
+    public let incumbentValue: Double?
+    /// Threshold the candidate had to satisfy.
+    public let threshold: Double
+    /// Whether lower is better for this metric.
+    public let lowerIsBetter: Bool
+
+    public init(
+        name: String,
+        displayName: String,
+        candidateValue: Double,
+        incumbentValue: Double? = nil,
+        threshold: Double,
+        lowerIsBetter: Bool = true
+    ) {
+        self.name = name
+        self.displayName = displayName
+        self.candidateValue = candidateValue
+        self.incumbentValue = incumbentValue
+        self.threshold = threshold
+        self.lowerIsBetter = lowerIsBetter
+    }
+}
+
+/// First-class promotion-gate verdict — not an error.
+public struct GateVerdict: Sendable, Equatable, Hashable {
+    /// Whether the candidate was promoted to active.
+    public let promoted: Bool
+    /// Metric that failed (or the primary metric when promoted).
+    public let primaryMetric: GateMetric
+    /// Short audience-facing explanation.
+    public let reason: String
+
+    public init(promoted: Bool, primaryMetric: GateMetric, reason: String) {
+        self.promoted = promoted
+        self.primaryMetric = primaryMetric
+        self.reason = reason
+    }
+}
+
+/// Outcome of the poisoning demo pipeline.
+///
+/// On the scripted path this is always a **refusal**: the candidate is not
+/// promoted and ``activeVersionAfter`` equals ``activeVersionBefore``.
+public struct PoisoningOutcome: Sendable, Equatable {
+    public let verdict: GateVerdict
+    /// Adapter that was active when the pipeline started.
+    public let activeVersionBefore: AdapterVersion
+    /// Adapter still active after the gate (unchanged on refusal).
+    public let activeVersionAfter: AdapterVersion
+    /// Candidate that was evaluated and refused.
+    public let refusedCandidate: AdapterVersion
+
+    public init(
+        verdict: GateVerdict,
+        activeVersionBefore: AdapterVersion,
+        activeVersionAfter: AdapterVersion,
+        refusedCandidate: AdapterVersion
+    ) {
+        self.verdict = verdict
+        self.activeVersionBefore = activeVersionBefore
+        self.activeVersionAfter = activeVersionAfter
+        self.refusedCandidate = refusedCandidate
+    }
+}
+
+// MARK: - Network / offline
+
+/// Coarse reachability for the airplane-mode scene.
+public enum NetworkStatus: String, Sendable, Equatable, Hashable {
+    case online
+    case offline
+}
