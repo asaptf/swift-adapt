@@ -80,16 +80,15 @@ ADAPT_REAL_MODEL_TESTS=1 swift test --filter RealModel
 
 (That suite is not registered by default in M1 B1 — CLI slice B2 owns it.)
 
-### Metal library fixture
+### Metal library (generated, not vendored)
 
-SPM does not package Cmlx’s `default.metallib` automatically. Tests ship
-`MetalSupport/mlx-swift_Cmlx.bundle/default.metallib` (the bundle name upstream
-hardcodes as `SWIFTPM_BUNDLE`) and copy it next to the test executable at
-startup (`MetalBootstrap`). Rebuild the fixture after upgrading mlx-swift:
-
-```bash
-./scripts/build-mlx-metallib.sh
-```
+SPM does not package Cmlx’s `default.metallib` automatically. Tests **do not**
+commit one either — a frozen blob would silently drift from the floating
+0.31.x mlx-swift pin. Instead `MetalBootstrap` runs
+`scripts/ensure-mlx-metal-library.sh` on first use, compiling the resolved checkout
+into a revision-keyed cache under `.build/mlx-metallib-cache/`, then copies the
+metallib next to the test executable. Details:
+[`Tests/AdaptTrainTests/README.md`](../../Tests/AdaptTrainTests/README.md).
 
 ## Public surface (summary)
 

@@ -4,6 +4,12 @@
 Packages/
 Package.resolved
 
+# Generated MLX metallib for AdaptTrainTests (see scripts/ensure-mlx-metal-library.sh).
+# Primary cache lives under .build/ (already ignored); keep an explicit rule so
+# a future path change outside .build cannot reintroduce a tracked blob.
+**/default.metallib
+Tests/AdaptTrainTests/MetalSupport/
+
 # Xcode
 *.xcodeproj
 *.xcworkspace

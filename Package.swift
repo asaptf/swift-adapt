@@ -62,12 +62,11 @@ let package = Package(
                 .product(name: "MLXLMCommon", package: "mlx-swift-lm"),
             ],
             path: "Tests/AdaptTrainTests",
-            // Ships `mlx-swift_Cmlx.bundle/default.metallib` so SPM test
-            // executables can load MLX's Metal library (upstream Cmlx looks for
-            // this exact bundle name via SWIFTPM_BUNDLE).
-            resources: [
-                .copy("MetalSupport/mlx-swift_Cmlx.bundle"),
-            ]
+            // No committed metallib. MetalBootstrap builds default.metallib from
+            // the resolved mlx-swift checkout into .build/mlx-metallib-cache/
+            // (revision-keyed) on first AdaptTrainTests setup. See
+            // Tests/AdaptTrainTests/README.md.
+            exclude: ["README.md"]
         ),
     ]
 )
