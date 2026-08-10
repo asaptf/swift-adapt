@@ -104,6 +104,8 @@ The convention is written into `AdapterVersion.promptFormat` so a session that
 would serve the adapter under a different convention fails with a typed error.
 
 M3 held-out perplexity must use the same mask so numbers are comparable.
+`MLXPerExampleCrossEntropyScorer` (this module) implements AdaptEval's
+`PerExampleScorer` with that mask; the gate itself stays pure Swift in AdaptEval.
 
 ### Recipe finding → M3 (do not mini-build a gate here)
 
