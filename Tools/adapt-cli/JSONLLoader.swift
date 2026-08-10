@@ -1,4 +1,5 @@
 import AdaptCore
+import CryptoKit
 import Foundation
 
 /// Parses training examples from JSON Lines (one JSON object per line).
@@ -13,8 +14,9 @@ import Foundation
 /// - `source` — `explicitEdit` | `acceptance` | `rejection` | `synthetic`
 ///   (default `synthetic`)
 /// - `weight` — importance double; when omitted, uses `source.defaultWeight`
-/// - `id` — UUID string; generated when omitted
-/// - `capturedAt` — ISO-8601 date; defaults to now
+/// - `id` — UUID string; when omitted, a **content-stable** UUID is derived
+///   from `prompt` + `completion` so held-out pins survive reloads
+/// - `capturedAt` — ISO-8601 date; defaults to a content-stable epoch offset
 ///
 /// Blank lines and lines whose first non-whitespace character is `#` are skipped.
 /// A malformed object fails with the 1-based line number (never a stack trace).
@@ -79,19 +81,59 @@ public enum JSONLLoader {
             // Empty completion is allowed (rare) but reject missing via Decodable.
 
             let source = row.source ?? .synthetic
+            // Content-stable id/capturedAt when omitted so AdaptEval pins remain
+            // valid across process restarts (random UUIDs would break the yardstick).
+            let id = row.id ?? stableID(prompt: row.prompt, completion: row.completion)
+            let capturedAt =
+                row.capturedAt
+                ?? stableCapturedAt(prompt: row.prompt, completion: row.completion)
             examples.append(
                 TrainingExample(
-                    id: row.id ?? UUID(),
+                    id: id,
                     prompt: row.prompt,
                     completion: row.completion,
                     weight: row.weight,
-                    capturedAt: row.capturedAt ?? Date(),
+                    capturedAt: capturedAt,
                     source: source
                 )
             )
         }
 
         return examples
+    }
+
+    /// Deterministic UUID from prompt/completion (first 16 bytes of SHA-256).
+    public static func stableID(prompt: String, completion: String) -> UUID {
+        var payload = Data()
+        payload.append(contentsOf: prompt.utf8)
+        payload.append(0)
+        payload.append(contentsOf: completion.utf8)
+        let digest = SHA256.hash(data: payload)
+        let bytes = Array(digest.prefix(16))
+        return UUID(
+            uuid: (
+                bytes[0], bytes[1], bytes[2], bytes[3],
+                bytes[4], bytes[5], bytes[6], bytes[7],
+                bytes[8], bytes[9], bytes[10], bytes[11],
+                bytes[12], bytes[13], bytes[14], bytes[15]
+            )
+        )
+    }
+
+    /// Deterministic capture time so recency stratification is stable across loads.
+    public static func stableCapturedAt(prompt: String, completion: String) -> Date {
+        var payload = Data()
+        payload.append(contentsOf: prompt.utf8)
+        payload.append(0)
+        payload.append(contentsOf: completion.utf8)
+        let digest = SHA256.hash(data: payload)
+        // Mix bytes into a second-resolution offset from a fixed epoch.
+        var value: UInt64 = 0
+        for (i, b) in digest.prefix(8).enumerated() {
+            value |= UInt64(b) << (8 * i)
+        }
+        let offset = TimeInterval(value % 86_400_000) // ~1000 days of range
+        return Date(timeIntervalSince1970: 1_700_000_000 + offset)
     }
 
     /// Short, operator-friendly decode error (no stack traces).

@@ -3,11 +3,18 @@ import AdaptRegistry
 import ArgumentParser
 import Foundation
 
-/// `adapt-cli promote` — manual promotion (eval gate is M3).
+/// `adapt-cli promote` — promote a stored version to active.
+///
+/// Prefer `adapt-cli eval --promote` so the §4.5 gate decides. This command is
+/// the **manual override**: it flips the pointer without re-running the gate.
 public struct PromoteCommand: AsyncParsableCommand {
     public static let configuration = CommandConfiguration(
         commandName: "promote",
-        abstract: "Promote a stored candidate to active (manual; eval gate is M3)."
+        abstract: "Promote a stored candidate to active (manual override; prefer eval --promote).",
+        discussion: """
+            Manual pointer flip. Does not re-score or re-run the Wilcoxon gate.
+            Use `adapt-cli eval --version N --promote` for gate-gated promotion.
+            """
     )
 
     @Option(name: .long, help: "Version number to promote.")
@@ -53,9 +60,16 @@ public struct PromoteCommand: AsyncParsableCommand {
         }
         let registry = try CLICommon.openRegistry(root: self.registry)
 
+        print(
+            """
+            Manual promote (override) — AdaptEval gate is not re-run.
+            Prefer: adapt-cli eval --version \(version) --promote
+            """
+        )
+
         if let lineageID {
             try await registry.promote(lineageID: lineageID, version: version)
-            print("Promoted lineage \(lineageID.prefix(16))… v\(version) → active")
+            print("Promoted lineage \(lineageID.prefix(16))… v\(version) → active (manual)")
             return
         }
 
@@ -70,7 +84,7 @@ public struct PromoteCommand: AsyncParsableCommand {
         )
         try await registry.promote(lineage: lineage, version: version)
         print(
-            "Promoted task=\(task) lineage=\(lineage.lineageID.prefix(16))… v\(version) → active"
+            "Promoted task=\(task) lineage=\(lineage.lineageID.prefix(16))… v\(version) → active (manual)"
         )
     }
 }

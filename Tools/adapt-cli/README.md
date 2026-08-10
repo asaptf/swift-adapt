@@ -10,7 +10,8 @@ examples, inspect the on-disk registry, and compare base vs adapter generation.
 | `train` | Fine-tune via `AdaptTrain.Trainer`, stream progress, write versioned candidates |
 | `generate` | **Default experience:** base model **and** active/latest adapter side-by-side |
 | `inspect` | List lineages, versions, active pointer, digests, training windows |
-| `promote` | Manually flip the active pointer (eval gate is M3; not auto) |
+| `eval` | Run the §4.5 promotion gate (pinned held-out, paired Wilcoxon) against the active adapter |
+| `promote` | Manually flip the active pointer (**override**; prefer `eval --promote`) |
 | `measure` | Held-out mean cross-entropy (nats/token) for one version — **measurement only**, not a gate |
 | `export-demo-nights` | Split a combined JSONL into `night-N.jsonl` + `held-out.jsonl` |
 
@@ -93,9 +94,36 @@ using the same completion mask as training. With `--record`, the value is stored
 on the version’s `EvalReport` together with `primaryMetric`,
 `primaryDirection=lowerIsBetter`, and example/token counts.
 
-This is **not** the promotion gate. The gate (pinned held-out set, paired
-Wilcoxon, abstain floor — architecture §4.5) is M3. `measure` only produces the
-number; it never auto-promotes or rejects.
+This is **not** the promotion gate. Use `eval` for the decision procedure
+(pinned held-out set, paired Wilcoxon, abstain floor — architecture §4.5).
+`measure` only produces the number; it never auto-promotes or rejects.
+
+## Promotion gate (`eval`)
+
+```bash
+swift run adapt-cli eval \
+  --data path/to/pool-or-held-out.jsonl \
+  --version 7 \
+  --model mlx-community/Qwen3-4B-4bit \
+  --task style-mirror \
+  --rank 8 \
+  --num-layers 8 \
+  --registry "$REG" \
+  --record
+# optional: --promote   # flips active only when the gate returns promote
+```
+
+Compares the candidate to the **active** adapter on a **lineage-pinned** held-out
+set (`held_out_pin.json` beside the lineage). Outcomes:
+
+| Verdict | Meaning | Exit (with `--promote`) |
+|---|---|---|
+| `PROMOTE` | Significant Wilcoxon improvement | promotes |
+| `REFUSE` | Worse or not significant (feeds §4.6 backoff) | exit 1 |
+| `ABSTAIN` | Below `minHeldOut` / no incumbent (not a refusal) | exit 3 |
+| pin broken | Pinned IDs missing from `--data` | exit 2 |
+
+`promote` without `eval` remains a **manual override** and prints a warning.
 
 ## Seven-night demo registry
 

@@ -19,6 +19,24 @@ struct JSONLLoaderTests {
         #expect(examples[0].weight == SignalSource.synthetic.defaultWeight)
     }
 
+    @Test("omitted id is content-stable across parses (held-out pin safety)")
+    func stableIDsWhenOmitted() throws {
+        let text = """
+            {"prompt":"Hello","completion":"World"}
+            {"prompt":"Other","completion":"Text"}
+            """
+        let a = try JSONLLoader.parse(text: text)
+        let b = try JSONLLoader.parse(text: text)
+        #expect(a.map(\.id) == b.map(\.id))
+        #expect(a[0].id != a[1].id)
+        #expect(a[0].id == JSONLLoader.stableID(prompt: "Hello", completion: "World"))
+        // Explicit id is honoured.
+        let withID = try JSONLLoader.parse(
+            text: #"{"prompt":"p","completion":"c","id":"00000000-0000-4000-8000-000000000001"}"#
+        )
+        #expect(withID[0].id == UUID(uuidString: "00000000-0000-4000-8000-000000000001"))
+    }
+
     @Test("applies optional source and weight")
     func optionalSourceAndWeight() throws {
         let text = """
