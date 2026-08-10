@@ -21,9 +21,14 @@ let package = Package(
             ],
             path: "Sources/StyleMirrorEngine"
         ),
+        .target(
+            name: "StyleMirrorUI",
+            dependencies: ["StyleMirrorEngine"],
+            path: "Sources/StyleMirrorUI"
+        ),
         .executableTarget(
             name: "StyleMirror",
-            dependencies: ["StyleMirrorEngine"],
+            dependencies: ["StyleMirrorUI", "StyleMirrorEngine"],
             path: "Sources/StyleMirror"
         ),
         .testTarget(
