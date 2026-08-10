@@ -8,11 +8,12 @@ import Foundation
 /// Nothing here is derived from a real person's private mail.
 ///
 /// **Voice to listen for (human / adapted):** short sentences, mid-thought opens,
-/// em-dashes, parenthetical asides, direct asks, sign-off `— renna` (or `r` when
-/// internal). Avoids corporate fluff.
+/// em-dashes, parenthetical asides, direct asks. Sent-mail training examples keep
+/// sign-off `— renna` (or `r` when internal). Blind-test candidates strip all
+/// signatures so length and sign-off cannot leak the answer (`DESIGN.md` §4.3).
 ///
-/// **Base-model foil:** multi-paragraph politeness, "hope this finds you well",
-/// "please don't hesitate", generic "Best regards".
+/// **Base-model foil:** stiff politeness, hedge words, generic corporate register —
+/// distinguished by *writing*, not by length or a signature block.
 public enum SampleCorpus: Sendable {
     /// Display name of the fictional user.
     public static let userDisplayName = "Renna Vale"
@@ -50,19 +51,18 @@ public enum SampleCorpus: Sendable {
     // MARK: - Blind test fixtures
 
     /// Incoming emails that have a prepared three-way reply set.
+    ///
+    /// Fairness (`DESIGN.md` §4.3): candidates share a 40–80 word length class,
+    /// stay within ~15% of each other, and carry no signature blocks.
     public static let blindRounds: [BlindRoundFixture] = [
         BlindRoundFixture(
             incoming: EmailMessage(
                 id: "in-en-sprint",
                 subject: "Sprint 14 scope — cut or keep the export polish?",
                 body: """
-                Hi Renna,
-
                 Design is asking whether we keep the CSV export polish in Sprint 14 or \
-                slip it. Engineering says it's ~2 days if we drop the fancy column picker.
-
+                slip it. Engineering says it's ~2 days if we drop the fancy column picker. \
                 Need a call by EOD?
-
                 — Jules (fictional PM, Northglass Co.)
                 """,
                 language: "en",
@@ -70,39 +70,23 @@ public enum SampleCorpus: Sendable {
                 toDisplayName: userDisplayName
             ),
             base: """
-            Hi Jules,
-
-            I hope this email finds you well. Thank you for reaching out regarding the \
-            Sprint 14 scope question.
-
-            After careful consideration, I believe we should evaluate the trade-offs \
-            between shipping the polished CSV export experience and protecting the rest \
-            of the sprint commitments. If engineering estimates approximately two days \
-            without the advanced column picker, that may be a reasonable compromise, \
-            though I would welcome a short discussion to align stakeholders.
-
-            Please don't hesitate to schedule a call at your earliest convenience. I am \
-            happy to make time before end of day if that is helpful.
-
-            Best regards,
-            Renna Vale
-            Product Lead, Harborfinch
+            Thank you for reaching out about the Sprint 14 scope question. After careful \
+            consideration of the trade-offs, I recommend we ship the plain CSV export and \
+            defer the polished column picker rather than risk the rest of the sprint. Two \
+            days without the advanced picker seems a reasonable compromise. I am happy to \
+            join a short call before end of day if design still needs alignment.
             """,
             adapted: """
             jules — drop the fancy column picker, ship plain CSV. two days is fine; polish \
-            can land in 15.
-
-            no call unless design wants to fight it — then point them at me.
-
-            — renna
+            can land in 15. no call unless design wants to fight it — then point them at me. \
+            the picker is pure nice-to-have and we already export. if they need a written \
+            rationale for the backlog, say we chose delivery over chrome this sprint.
             """,
             human: """
             jules — slip the fancy column picker, keep the plain CSV. two days is fine; \
-            the polish can ride in 15.
-
-            no call needed unless design is going to fight it. if they do, point them at me.
-
-            — renna
+            the polish can ride in 15. no call needed unless design is going to fight it. \
+            if they do, point them at me. picker is nice-to-have and export already works. \
+            if they want it written for the backlog: we picked delivery over chrome this sprint.
             """
         ),
         BlindRoundFixture(
@@ -110,46 +94,31 @@ public enum SampleCorpus: Sendable {
                 id: "in-en-vendor",
                 subject: "Invoice #HF-8841 — payment terms",
                 body: """
-                Hello,
-
-                Attaching invoice HF-8841 for the March analytics work. Net-15 as discussed, \
-                or we can do Net-30 if that is easier on your side.
-
-                Thanks,
-                Priya N. (fictional, Lumenwick Analytics)
+                Attaching invoice HF-8841 for the March analytics work. Net-15 as discussed — \
+                or is Net-30 easier on your side?
+                Thanks — Priya N. (fictional, Lumenwick Analytics)
                 """,
                 language: "en",
                 fromDisplayName: "Priya Nagaswamy",
                 toDisplayName: userDisplayName
             ),
             base: """
-            Dear Priya,
-
-            I hope you are doing well. Thank you very much for sending over invoice \
-            HF-8841 and for your flexibility on payment terms.
-
+            Thank you for sending invoice HF-8841 and for your flexibility on payment terms. \
             Net-30 would be most convenient for our finance process. I will forward the \
-            invoice to our operations team and confirm once it has been scheduled.
-
-            Please let me know if you need any additional information from our side. \
-            We truly appreciate the partnership.
-
-            Warm regards,
-            Renna Vale
+            invoice to operations and confirm once it has been scheduled. Please let me know \
+            if you need any additional information from our side.
             """,
             adapted: """
-            priya — received. net-30 is better on our side; finance is slow.
-
-            forwarding HF-8841 today. ping if you don't see it by friday.
-
-            — renna
+            priya — received. net-30 is better on our side; finance is slow. forwarding \
+            HF-8841 today. ping if you don't see it by friday. no other docs needed unless \
+            ops flags a weird line item. thanks for the flex on terms — that unblocks the \
+            queue for us.
             """,
             human: """
-            priya — got it. net-30 works, finance is slower than i am.
-
-            i'll kick HF-8841 over today. ping me if it hasn't landed by friday.
-
-            — renna
+            priya — got it. net-30 works, finance is slower than i am. i'll kick HF-8841 \
+            over today. ping me if it hasn't landed by friday. you don't owe extra paperwork \
+            unless ops finds a weird line item. appreciate the flex on terms; it unblocks \
+            the queue.
             """
         ),
         BlindRoundFixture(
@@ -157,11 +126,8 @@ public enum SampleCorpus: Sendable {
                 id: "in-es-launch",
                 subject: "¿Lanzamos el martes o esperamos al fix de i18n?",
                 body: """
-                Renna,
-
-                El fix de i18n puede estar el miércoles. Marketing quiere martes sí o sí.
+                El fix de i18n puede estar el miércoles. Marketing quiere martes sí o sí. \
                 ¿Qué priorizamos?
-
                 — Mateo (ficticio, Harborfinch ES)
                 """,
                 language: "es",
@@ -169,32 +135,23 @@ public enum SampleCorpus: Sendable {
                 toDisplayName: userDisplayName
             ),
             base: """
-            Hola Mateo,
-
-            Espero que te encuentres bien. Gracias por plantear esta decisión tan \
-            importante entre la fecha de lanzamiento y la calidad de la internacionalización.
-
-            Mi recomendación sería alinear a marketing con una fecha que no comprometa \
-            la experiencia de los usuarios en otros idiomas. Si el arreglo llega el \
-            miércoles, tal vez podamos comunicar un lanzamiento el jueves con un mensaje \
-            claro. Estoy a tu disposición para una reunión cuando lo necesites.
-
-            Saludos cordiales,
-            Renna Vale
+            Gracias por plantear esta decisión entre la fecha de lanzamiento y la calidad \
+            de la internacionalización. Mi recomendación es alinear a marketing con una \
+            fecha que no comprometa la experiencia en otros idiomas. Si el arreglo llega \
+            el miércoles, podríamos comunicar un lanzamiento el jueves con un mensaje claro \
+            a usuarios.
             """,
             adapted: """
-            mateo — martes no. i18n roto duele más que un día de delay.
-
-            salimos jueves; dile a marketing que el copy ya está. si protestan, me etiquetas.
-
-            — renna
+            mateo — martes no. i18n roto duele más que un día de delay. salimos jueves; \
+            dile a marketing que el copy ya está. si protestan, me etiquetas. no negociamos \
+            calidad de idioma por un slot de calendario. si quieren pelearlo en público, \
+            que sea conmigo.
             """,
             human: """
-            mateo — no martes. i18n roto es peor que un día de delay.
-
-            lanza jueves, dile a marketing que el copy ya lo tienen. si protestan, me etiquetas.
-
-            — renna
+            mateo — no martes. i18n roto es peor que un día de delay. lanza jueves, dile a \
+            marketing que el copy ya lo tienen. si protestan, me etiquetas. no cambiamos \
+            calidad de idioma por un hueco en el calendario. si hay pelea pública, que sea \
+            conmigo.
             """
         ),
         BlindRoundFixture(
@@ -202,11 +159,8 @@ public enum SampleCorpus: Sendable {
                 id: "in-ru-hiring",
                 subject: "Кандидат на mobile — второе интервью?",
                 body: """
-                Привет, Renna.
-
                 Кандидат после первого собеса ок, но слабоват в архитектуре. Делаем второй \
                 раунд или вежливо отказываем?
-
                 — Лена (вымышл., Harborfinch)
                 """,
                 language: "ru",
@@ -214,32 +168,22 @@ public enum SampleCorpus: Sendable {
                 toDisplayName: userDisplayName
             ),
             base: """
-            Здравствуйте, Лена!
-
-            Благодарю Вас за подробный отзыв о кандидате. Это действительно непростой \
-            выбор. С одной стороны, положительное первое впечатление ценно; с другой — \
-            пробелы в архитектурном мышлении могут создать риски для команды.
-
-            Предлагаю провести короткое обсуждение с командой и, при необходимости, \
-            организовать дополнительное интервью с фокусом на системный дизайн. Я \
-            готова помочь с вопросами и участвовать, если потребуется.
-
-            С уважением,
-            Renna Vale
+            Благодарю за подробный отзыв о кандидате — это действительно непростой выбор. \
+            Положительное первое впечатление ценно, но пробелы в архитектурном мышлении \
+            могут создать риски для команды. Предлагаю коротко обсудить с командой и при \
+            необходимости провести интервью с фокусом на системный дизайн.
             """,
             adapted: """
-            лена — второй раунд не делаем. архитектуру за спринт не вытянуть.
-
-            вежливый отказ; пул не горит. через полгода — можно снова, сейчас нет.
-
-            — renna
+            лена — второй раунд не делаем. архитектуру за спринт не вытянуть. вежливый \
+            отказ; пул не горит. через полгода — можно снова, сейчас нет. не берём «на \
+            вырост» на mobile, это слишком дорого. текст отказа могу набросать я, если \
+            надо будет.
             """,
             human: """
-            лена — второго раунда не будет. архитектура не «подтянется за спринт».
-
-            вежливый отказ, пул не горит. если через полгода подрастет — ок, не сейчас.
-
-            — renna
+            лена — второго раунда не будет. архитектура не «подтянется за спринт». \
+            вежливый отказ, пул не горит. если через полгода подрастет — ок, не сейчас. \
+            на mobile не берём «на вырост», слишком дорого для роли. текст отказа \
+            набросаю сама при необходимости.
             """
         ),
         BlindRoundFixture(
@@ -247,50 +191,31 @@ public enum SampleCorpus: Sendable {
                 id: "in-en-customer",
                 subject: "Re: onboarding stuck on step 3",
                 body: """
-                Hi team,
-
                 We're still blocked on step 3 of onboarding (SSO). Screenshot attached in \
                 the ticket. Any ETA?
-
-                Best,
-                Samir (fictional, Copperlantern Inc.)
+                — Samir (fictional, Copperlantern Inc.)
                 """,
                 language: "en",
                 fromDisplayName: "Samir Haddad",
                 toDisplayName: userDisplayName
             ),
             base: """
-            Dear Samir,
-
-            I hope this message finds you well, and I sincerely apologize for the \
-            friction you have encountered during onboarding.
-
-            I have reviewed the report regarding step 3 (SSO) and will coordinate with \
-            our engineering team to investigate the screenshot you kindly attached. We \
-            aim to provide an update as soon as we have more information. In the meantime, \
-            please don't hesitate to reach out if there is anything else we can do to assist.
-
-            Thank you for your patience and for choosing Harborfinch.
-
-            Best regards,
-            Renna Vale
-            Customer Success / Product
+            I sincerely apologize for the friction during onboarding. I have reviewed the \
+            report on step 3 (SSO) and will coordinate with engineering to investigate the \
+            screenshot you attached. We aim to provide an update as soon as we have more \
+            information. Please reach out if there is anything else we can do to assist.
             """,
             adapted: """
-            samir — on us. step 3 SSO dies when the IdP skips `email_verified`.
-
-            workaround today: password path, then link IdP in settings. real fix in review — \
-            target tomorrow AM. i'll update the ticket either way.
-
-            — renna
+            samir — on us. step 3 SSO dies when the IdP skips `email_verified`. workaround \
+            today: password path, then link IdP in settings. real fix in review — target \
+            tomorrow AM. i'll update the ticket either way. sorry for the thrash; you \
+            should not have had to chase this down.
             """,
             human: """
-            samir — sorry, that's on us. SSO step 3 fails when the IdP omits `email_verified`.
-
-            workaround (today): send users through password path, then link IdP in settings. \
-            proper fix is in review — aiming tomorrow AM. i'll reply on the ticket either way.
-
-            — renna
+            samir — sorry, that's on us. SSO step 3 fails when the IdP omits \
+            `email_verified`. workaround today: send users through password path, then \
+            link IdP in settings. proper fix is in review — aiming tomorrow AM. i'll reply \
+            on the ticket either way. you should not have had to chase us.
             """
         ),
         BlindRoundFixture(
@@ -298,11 +223,8 @@ public enum SampleCorpus: Sendable {
                 id: "in-es-partner",
                 subject: "Propuesta de webinar conjunto",
                 body: """
-                Hola Renna,
-
                 ¿Os animáis a un webinar conjunto en mayo? Nosotros traemos audiencia de \
                 latam; vosotros el producto.
-
                 — Camila (ficticia, Redolente Media)
                 """,
                 language: "es",
@@ -310,34 +232,20 @@ public enum SampleCorpus: Sendable {
                 toDisplayName: userDisplayName
             ),
             base: """
-            Estimada Camila,
-
-            Espero que se encuentre muy bien. Muchas gracias por la amable invitación a \
-            colaborar en un webinar.
-
-            La propuesta suena interesante y alineada con nuestros objetivos de \
-            crecimiento en la región. Me encantaría conocer más detalles sobre fechas, \
-            formato y expectativas de contenido antes de confirmar. ¿Podríamos agendar \
-            una breve llamada la próxima semana?
-
-            Quedo atenta a sus comentarios.
-
-            Saludos cordiales,
-            Renna Vale
+            Muchas gracias por la amable invitación a colaborar en un webinar conjunto. \
+            La propuesta suena interesante y alineada con nuestros objetivos de crecimiento \
+            en la región. Me encantaría conocer más detalles sobre fechas, formato y \
+            expectativas de contenido antes de confirmar una participación formal.
             """,
             adapted: """
-            camila — mayo ok si son ≤45 min y no un pitch con disfraz de webinar.
-
-            pásame 3 fechas + outline. si es solo logos y humo, paso.
-
-            — renna
+            camila — mayo ok si son ≤45 min y no un pitch con disfraz de webinar. pásame \
+            3 fechas + outline. si es solo logos y humo, paso. necesitamos demo real del \
+            producto, no un panel de marcas. si el outline no tiene eso, mejor otro mes.
             """,
             human: """
-            camila — mayo sí, si es 45 min max y no un pitch disfrazado.
-
-            mandame 3 fechas y el outline. si el outline es solo logos y humo, paso.
-
-            — renna
+            camila — mayo sí, si es 45 min max y no un pitch disfrazado. mandame 3 fechas \
+            y el outline. si el outline es solo logos y humo, paso. hace falta demo real \
+            del producto, no un panel de marcas. si eso no está en el outline, otro mes.
             """
         ),
     ]
@@ -365,71 +273,43 @@ public enum SampleCorpus: Sendable {
     // MARK: - Code-switching
 
     /// Shared request for the code-switching scene plus base/adapted per language.
+    ///
+    /// Base replies stay in the two-sentence stiff register (`DESIGN.md` §8.5) so they
+    /// fit the ~520 pt language column; adapter replies stay short and personal.
     public static let codeSwitch = CodeSwitchResult(
         requestSummary: "Decline a last-minute meeting and propose async notes instead.",
         languages: [
             CodeSwitchLanguageResult(
                 language: .english,
                 baseReply: """
-                Hi,
-
-                I hope you are well. Unfortunately I am unable to attend the meeting at \
-                the proposed time. Would it be possible to reschedule, or alternatively \
-                I would be happy to review notes asynchronously and share written feedback.
-
-                Please let me know what works best. Thank you for your understanding.
-
-                Best regards,
-                Renna
+                Thank you for the invitation. Unfortunately I am unable to attend at the \
+                proposed time and would be happy to review notes asynchronously instead.
                 """,
                 adaptedReply: """
                 can't make that slot — already stacked. send notes async and i'll comment \
                 in the doc by eod. if it's a hard decision, put the options at the top.
-
-                — renna
                 """
             ),
             CodeSwitchLanguageResult(
                 language: .spanish,
                 baseReply: """
-                Hola,
-
-                Espero que estés bien. Lamento informarte que no podré asistir a la \
-                reunión en el horario propuesto. ¿Podríamos reprogramarla, o en su \
-                defecto revisaré las notas de forma asíncrona y enviaré comentarios por \
-                escrito?
-
-                Gracias de antemano por tu comprensión.
-
-                Saludos cordiales,
-                Renna
+                Le agradezco la invitación. Lamentablemente no podré asistir a la hora \
+                propuesta y revisaré las notas de forma asíncrona con mucho gusto.
                 """,
                 adaptedReply: """
                 no llego a esa hora — día roto. mándame notas en el doc y comento antes \
                 de cierre. si hay que decidir algo, pon las opciones arriba del todo.
-
-                — renna
                 """
             ),
             CodeSwitchLanguageResult(
                 language: .russian,
                 baseReply: """
-                Здравствуйте!
-
-                К сожалению, я не смогу принять участие во встрече в предложенное время. \
-                Буду признательна, если мы перенесём созвон, либо я изучу заметки \
-                асинхронно и пришлю письменные комментарии.
-
-                Заранее спасибо за понимание.
-
-                С уважением,
-                Renna
+                Благодарю за приглашение. К сожалению, не смогу принять участие в \
+                предложенное время и изучу заметки асинхронно.
                 """,
                 adaptedReply: """
                 на этот слот не успеваю — день уже забит. кинь заметки в док, прокомментирую \
                 до конца дня. если надо решение — варианты в начале, без прелюдии.
-
-                — renna
                 """
             ),
         ]
