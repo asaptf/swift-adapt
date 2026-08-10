@@ -21,6 +21,29 @@ public struct LossChart: View {
 
     private var head: LossPoint? { points.last }
 
+    /// Exponential moving average of the per-step loss.
+    ///
+    /// Real training at batch size 1 is violently noisy — each step sees one
+    /// example, so raw loss swings across the whole axis and the trend is
+    /// invisible. The scripted engine's tidy decay was a fiction; this is what
+    /// the data actually looks like. So the raw series stays (faint, because
+    /// hiding it would be a lie about the measurement) and the trend is drawn
+    /// over it, labelled as smoothed.
+    private var smoothed: [LossPoint] {
+        guard points.count > 1 else { return points }
+        let alpha = 0.2
+        var value = points[0].loss
+        return points.map { point in
+            value += alpha * (point.loss - value)
+            return LossPoint(
+                id: point.id,
+                step: point.step,
+                loss: value,
+                validationLoss: point.validationLoss
+            )
+        }
+    }
+
     /// Label stride chosen from the run length, aiming for four to six labels.
     ///
     /// A fixed stride only suits one run length: at 40 steps a stride of 50
@@ -49,14 +72,26 @@ public struct LossChart: View {
 
                 LineMark(
                     x: .value("Step", point.step),
-                    y: .value("Loss", point.loss)
+                    y: .value("Loss", point.loss),
+                    series: .value("Series", "raw")
+                )
+                .interpolationMethod(.monotone)
+                .lineStyle(StrokeStyle(lineWidth: 1, lineCap: .round, lineJoin: .round))
+                .foregroundStyle(Palette.accent.opacity(0.25))
+            }
+
+            ForEach(smoothed) { point in
+                LineMark(
+                    x: .value("Step", point.step),
+                    y: .value("Loss", point.loss),
+                    series: .value("Series", "trend")
                 )
                 .interpolationMethod(.monotone)
                 .lineStyle(StrokeStyle(lineWidth: 2.5, lineCap: .round, lineJoin: .round))
                 .foregroundStyle(Palette.accent)
             }
 
-            if let head {
+            if let head = smoothed.last {
                 PointMark(
                     x: .value("Step", head.step),
                     y: .value("Loss", head.loss)

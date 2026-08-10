@@ -122,7 +122,7 @@ public struct TrainScreen: View {
                     .textStyle(.headline)
                     .foregroundStyle(Palette.ink)
                 Spacer()
-                Text("LoRA r=\(rank) · \(state.trainingConfiguration.totalSteps) steps")
+                Text("LoRA r=\(rank) · \(state.trainingConfiguration.totalSteps) steps · loss smoothed")
                     .textStyle(.dataS)
                     .foregroundStyle(Palette.inkSecondary)
             }
