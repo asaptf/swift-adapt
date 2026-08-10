@@ -370,7 +370,7 @@ Follows the `swift-extract` `@Extractable` pattern: the macro generates conforma
 - Errors: one error enum per module, **distinctly named** — `AdaptCoreError`, `AdaptRegistryError`, `AdaptTrainError`, … — all conforming to `LocalizedError`. Not one type called `AdaptError` per module: Swift does not namespace types at the use site, so identically-named enums collide in any file importing two modules and force callers to write `AdaptRegistry.AdaptError`.
 - Public API carries no test-only affordances: no fault-injection cases in public error enums, no test hooks in public surface (use `package` access — the test targets are in the same package).
 - No new third-party dependencies without updating this document's §3.
-- Commit per logical unit; each milestone ends with a tagged release `m1`, `m2`, …
+- Commit per logical unit. Releases are tagged **semver** (`0.1.0`, `0.2.0`, …); each milestone additionally gets an annotated marker tag (`m1`, `m2`, …) on the same commit. A bare `m1` tag is **not a version**: SwiftPM ignores non-semver tags, so consumers could only depend on a branch or revision, and Swift Package Index would list the package with no releases.
 
 ---
 
@@ -397,6 +397,12 @@ Findings from reading the **pinned upstream source** (`mlx-swift` 0.31.6, `mlx-s
 - **Slice B2 — `adapt-cli`** (`train` / `generate` / `inspect`) and the real-model acceptance demo of §6 M1.
 
 Unit tests are **network-free and model-free** throughout: MLX-level tests run against tiny synthetic modules and a stub tokenizer. Anything needing real weights is an opt-in suite, disabled by default.
+
+### Naming & distribution (checked 2026-08-10)
+
+`swift-adapt` is free: no package with basename `swift-adapt` or `adapt` appears in `SwiftPackageIndex/PackageList` (11,500 entries), and no exact `swift-adapt` repo exists among GitHub's Swift repositories matching "adapt". Two unrelated repos named `Adapt` exist but are not in the index. Module names `AdaptCore` / `AdaptRegistry` / `AdaptTrain` are likewise unclaimed.
+
+**Swift Package Index does not reserve names** — it is an index populated by a PR to `SwiftPackageIndex/PackageList` pointing at a *public* repository, and it derives display names from `owner/repo` plus `Package.swift`. The only claimable namespace is the GitHub path, and GitHub paths are per-owner, so there is no land grab to lose. Decision: **no repository created yet**; publish and submit to the index once M1 is complete and a semver tag exists, so the first public snapshot has a green test suite and a resolvable version.
 
 ---
 
