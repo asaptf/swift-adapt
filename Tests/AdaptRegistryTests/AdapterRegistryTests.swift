@@ -192,7 +192,149 @@ struct AdapterRegistryTests {
         }
     }
 
-    @Test("crash mid-promote leaves consistent active pointer")
+    /// Mid-store crash must not brick the lineage: listVersions stays usable,
+    /// active pointer is unchanged, a subsequent store succeeds with a sane
+    /// version number, and the same holds after reopening the registry root.
+    @Test("crash mid-storeCandidate leaves lineage usable for list/store/reopen")
+    func crashMidStoreLeavesLineageUsable() async throws {
+        let (registry, root) = try makeRegistry()
+        defer { teardown(root) }
+
+        let lineage = sampleLineage
+        let v1 = try await registry.storeCandidate(
+            lineage: lineage,
+            weights: Data("w1".utf8),
+            trainedOn: sampleWindow
+        )
+        try await registry.promote(lineage: lineage, version: v1.version)
+
+        await registry.setFaultAfterWeightsWrite(true)
+        do {
+            _ = try await registry.storeCandidate(
+                lineage: lineage,
+                weights: Data("partial".utf8),
+                trainedOn: sampleWindow
+            )
+            Issue.record("expected injected fault")
+        } catch let error as RegistryTestFault {
+            guard case .injected = error else {
+                Issue.record("expected RegistryTestFault.injected, got \(error)")
+                return
+            }
+        } catch {
+            Issue.record("expected RegistryTestFault, got \(error)")
+        }
+
+        // listVersions must not throw; only the previously complete version is visible.
+        let listed = try await registry.listVersions(for: lineage)
+        #expect(listed.map(\.version) == [1])
+
+        let active = try await registry.activeVersion(for: lineage)
+        #expect(active?.version == 1)
+
+        // Subsequent store must succeed with a version number that does not collide.
+        let afterCrash = try await registry.storeCandidate(
+            lineage: lineage,
+            weights: Data("after-crash".utf8),
+            trainedOn: sampleWindow
+        )
+        #expect(afterCrash.version >= 2)
+        #expect(afterCrash.status == .candidate)
+
+        let listedAfter = try await registry.listVersions(for: lineage)
+        #expect(listedAfter.map(\.version).sorted() == [1, afterCrash.version].sorted())
+        #expect(listedAfter.count == 2)
+
+        // Simulated process restart on the same root.
+        let reopened = try AdapterRegistry(rootURL: root)
+        let reopenedListed = try await reopened.listVersions(for: lineage)
+        #expect(reopenedListed.map(\.version).sorted() == [1, afterCrash.version].sorted())
+        let reopenedActive = try await reopened.activeVersion(for: lineage)
+        #expect(reopenedActive?.version == 1)
+
+        // Another store after reopen still works.
+        let afterReopen = try await reopened.storeCandidate(
+            lineage: lineage,
+            weights: Data("after-reopen".utf8),
+            trainedOn: sampleWindow
+        )
+        #expect(afterReopen.version > afterCrash.version)
+    }
+
+    /// Incomplete `vN/` left by an older build (no version.json) must be ignored
+    /// by listVersions and must not block allocation of a free next version.
+    @Test("legacy partial version directory is skipped and does not brick next store")
+    func legacyPartialVersionDirectorySelfHeals() async throws {
+        let (registry, root) = try makeRegistry()
+        defer { teardown(root) }
+
+        let lineage = sampleLineage
+        _ = try await registry.storeCandidate(
+            lineage: lineage,
+            weights: Data("w1".utf8),
+            trainedOn: sampleWindow
+        )
+
+        // Plant a legacy partial v2/ (weights only, no version.json) as older builds did.
+        let lineageDir = root.appendingPathComponent(lineage.lineageID, isDirectory: true)
+        let partialV2 = lineageDir.appendingPathComponent("v2", isDirectory: true)
+        try FileManager.default.createDirectory(at: partialV2, withIntermediateDirectories: true)
+        try Data("orphan-weights".utf8).write(
+            to: partialV2.appendingPathComponent("adapters.safetensors")
+        )
+
+        let listed = try await registry.listVersions(for: lineage)
+        #expect(listed.map(\.version) == [1])
+
+        // Next store must not reuse 2 (would collide) and must succeed.
+        let stored = try await registry.storeCandidate(
+            lineage: lineage,
+            weights: Data("w-new".utf8),
+            trainedOn: sampleWindow
+        )
+        #expect(stored.version >= 3)
+        #expect(FileManager.default.fileExists(
+            atPath: lineageDir.appendingPathComponent("v\(stored.version)").path
+        ))
+        #expect(FileManager.default.fileExists(
+            atPath: lineageDir
+                .appendingPathComponent("v\(stored.version)")
+                .appendingPathComponent("version.json").path
+        ))
+    }
+
+    @Test("gc removes leftover staging directories")
+    func gcCleansStagingDirectories() async throws {
+        let (registry, root) = try makeRegistry()
+        defer { teardown(root) }
+
+        let lineage = sampleLineage
+        _ = try await registry.storeCandidate(
+            lineage: lineage,
+            weights: Data("w1".utf8),
+            trainedOn: sampleWindow
+        )
+
+        // Leave a staging dir as a crashed store would.
+        let lineageDir = root.appendingPathComponent(lineage.lineageID, isDirectory: true)
+        let staging = lineageDir.appendingPathComponent(
+            ".staging-\(UUID().uuidString)",
+            isDirectory: true
+        )
+        try FileManager.default.createDirectory(at: staging, withIntermediateDirectories: true)
+        try Data("junk".utf8).write(to: staging.appendingPathComponent("adapters.safetensors"))
+
+        try await registry.gc(lineage: lineage, keepLast: 10)
+
+        let remaining = try FileManager.default.contentsOfDirectory(
+            at: lineageDir,
+            includingPropertiesForKeys: nil
+        )
+        #expect(!remaining.contains { $0.lastPathComponent.hasPrefix(".staging-") })
+        #expect(remaining.contains { $0.lastPathComponent == "v1" })
+    }
+
+    @Test("crash mid-promote leaves consistent active pointer; list and reopen agree")
     func crashSafetyMidPromote() async throws {
         let (registry, root) = try makeRegistry()
         defer { teardown(root) }
@@ -218,63 +360,30 @@ struct AdapterRegistryTests {
         do {
             try await registry.promote(lineage: lineage, version: 2)
             Issue.record("expected injected fault")
-        } catch let error as AdaptRegistry.AdaptError {
-            if case .injectedFault = error {
-                // expected
-            } else {
-                Issue.record("expected injectedFault, got \(error)")
+        } catch let error as RegistryTestFault {
+            guard case .injected = error else {
+                Issue.record("expected RegistryTestFault.injected, got \(error)")
+                return
             }
         } catch {
-            Issue.record("expected AdaptRegistry.AdaptError, got \(error)")
+            Issue.record("expected RegistryTestFault, got \(error)")
         }
 
-        // Registry must still open consistently — old active (v1) via state.json.
+        // state.json is the source of truth — active remains v1.
         let after = try await registry.activeVersion(for: lineage)
         #expect(after?.version == 1)
 
         let all = try await registry.listVersions(for: lineage)
         #expect(all.filter { $0.status == .active }.count == 1)
-    }
+        #expect(all.first { $0.version == 1 }?.status == .active)
 
-    @Test("crash after weights write leaves no corrupt pointer and no partial version")
-    func crashAfterWeightsWrite() async throws {
-        let (registry, root) = try makeRegistry()
-        defer { teardown(root) }
-
-        let lineage = sampleLineage
-        _ = try await registry.storeCandidate(
-            lineage: lineage,
-            weights: Data("w1".utf8),
-            trainedOn: sampleWindow
-        )
-        try await registry.promote(lineage: lineage, version: 1)
-
-        await registry.setFaultAfterWeightsWrite(true)
-        do {
-            _ = try await registry.storeCandidate(
-                lineage: lineage,
-                weights: Data("partial".utf8),
-                trainedOn: sampleWindow
-            )
-            Issue.record("expected injected fault")
-        } catch let error as AdaptRegistry.AdaptError {
-            if case .injectedFault = error {
-                // expected
-            } else {
-                Issue.record("expected injectedFault, got \(error)")
-            }
-        } catch {
-            Issue.record("expected AdaptRegistry.AdaptError, got \(error)")
-        }
-
-        // Active still v1; incomplete store must not be listable as a full version.
-        let active = try await registry.activeVersion(for: lineage)
-        #expect(active?.version == 1)
-
-        // Re-open via a fresh actor on the same root to simulate process restart.
+        // Reopen on same root: pointer still v1; promote to v2 still works.
         let reopened = try AdapterRegistry(rootURL: root)
         let reopenedActive = try await reopened.activeVersion(for: lineage)
         #expect(reopenedActive?.version == 1)
+        try await reopened.promote(lineage: lineage, version: 2)
+        let promoted = try await reopened.activeVersion(for: lineage)
+        #expect(promoted?.version == 2)
     }
 
     @Test("gc never deletes active version")
@@ -330,6 +439,53 @@ struct AdapterRegistryTests {
         try await registry.clearActive(lineage: lineage)
         let active = try await registry.activeVersion(for: lineage)
         #expect(active == nil)
+    }
+
+    /// Default `activeVersion` is metadata-only; corrupted weights still return
+    /// metadata, while `verifyIntegrity: true` surfaces the mismatch.
+    @Test("activeVersion does not hash weights by default")
+    func activeVersionSkipsIntegrityByDefault() async throws {
+        let (registry, root) = try makeRegistry()
+        defer { teardown(root) }
+
+        let lineage = sampleLineage
+        _ = try await registry.storeCandidate(
+            lineage: lineage,
+            weights: Data("original".utf8),
+            trainedOn: sampleWindow
+        )
+        try await registry.promote(lineage: lineage, version: 1)
+
+        let weightsURL = await registry.weightsURL(for: lineage, version: 1)
+        try Data("corrupted".utf8).write(to: weightsURL)
+
+        let meta = try await registry.activeVersion(for: lineage)
+        #expect(meta?.version == 1)
+
+        do {
+            _ = try await registry.activeVersion(for: lineage, verifyIntegrity: true)
+            Issue.record("expected integrityMismatch")
+        } catch let error as AdaptRegistry.AdaptError {
+            guard case .integrityMismatch = error else {
+                Issue.record("expected integrityMismatch, got \(error)")
+                return
+            }
+        } catch {
+            Issue.record("expected AdaptRegistry.AdaptError, got \(error)")
+        }
+
+        // Promote must still refuse unverified/corrupt weights.
+        do {
+            try await registry.promote(lineage: lineage, version: 1)
+            Issue.record("expected promote to fail integrity check")
+        } catch let error as AdaptRegistry.AdaptError {
+            guard case .integrityMismatch = error else {
+                Issue.record("expected integrityMismatch on promote, got \(error)")
+                return
+            }
+        } catch {
+            Issue.record("expected AdaptRegistry.AdaptError, got \(error)")
+        }
     }
 }
 

@@ -11,16 +11,25 @@ import Foundation
 /// <root>/<lineageID>/v<N>/version.json
 /// <root>/<lineageID>/state.json
 /// ```
+///
+/// A version directory becomes visible under `v<N>/` only after a full staged
+/// write is moved into place atomically. Incomplete or unreadable version
+/// directories (including leftovers from older builds) are ignored by listing
+/// and never brick a lineage.
 public actor AdapterRegistry {
     /// Configurable root directory for all lineages.
     public let rootURL: URL
 
-    /// Optional fault injection for crash-safety tests. Production code leaves this nil.
+    /// Optional fault injection for crash-safety tests. Production code leaves this nil/false.
+    /// Package-internal only — not a public affordance.
     package var faultBeforePointerFlip: Bool = false
     /// When true, the next store completes weights + config writes then throws before version.json.
     package var faultAfterWeightsWrite: Bool = false
 
     private let fileManager = FileManager.default
+
+    /// Prefix for staged version directories that are not yet committed as `v<N>`.
+    private static let stagingPrefix = ".staging-"
 
     /// Creates a registry rooted at `rootURL`, creating the directory if needed.
     ///
@@ -47,8 +56,9 @@ public actor AdapterRegistry {
 
     /// Stores a new candidate version for `lineage` with the given weight bytes.
     ///
-    /// Writes `adapter_config.json`, `adapters.safetensors`, and `version.json` under
-    /// `v<N>/` where N is the next free version number. Does not change the active pointer.
+    /// Builds the version in a private `.staging-<uuid>/` directory, then moves
+    /// it into place as `v<N>/` in one filesystem operation so a partial version
+    /// is never observable under a `v<N>` name. Does not change the active pointer.
     ///
     /// - Returns: The stored `AdapterVersion` metadata (status `.candidate`).
     @discardableResult
@@ -71,58 +81,84 @@ public actor AdapterRegistry {
 
         let versionNumber = try nextVersionNumber(lineageID: lineageID)
         let versionDir = versionDirectory(lineageID: lineageID, version: versionNumber)
-        try fileManager.createDirectory(at: versionDir, withIntermediateDirectories: true)
-        try FileProtection.apply(versionDir)
 
-        let digest = Self.sha256Hex(weights)
+        // Stage fully, then rename into `v<N>/` so observers never see a partial version.
+        let stagingName = "\(Self.stagingPrefix)\(UUID().uuidString)"
+        let stagingDir = lineageDir.appendingPathComponent(stagingName, isDirectory: true)
+        try fileManager.createDirectory(at: stagingDir, withIntermediateDirectories: true)
+        try FileProtection.apply(stagingDir)
 
-        // 1. adapter_config.json (upstream-compatible LoRAConfig)
-        try AtomicFileWriter.writeJSON(
-            lineage.loraConfig,
-            to: versionDir.appendingPathComponent("adapter_config.json")
-        )
+        do {
+            let digest = Self.sha256Hex(weights)
 
-        // 2. weights blob
-        try AtomicFileWriter.write(
-            data: weights,
-            to: versionDir.appendingPathComponent("adapters.safetensors")
-        )
+            // 1. adapter_config.json (upstream-compatible LoRAConfig)
+            try AtomicFileWriter.writeJSON(
+                lineage.loraConfig,
+                to: stagingDir.appendingPathComponent("adapter_config.json")
+            )
 
-        if faultAfterWeightsWrite {
-            faultAfterWeightsWrite = false
-            throw AdaptError.injectedFault("after weights write, before version.json")
+            // 2. weights blob
+            try AtomicFileWriter.write(
+                data: weights,
+                to: stagingDir.appendingPathComponent("adapters.safetensors")
+            )
+
+            if faultAfterWeightsWrite {
+                faultAfterWeightsWrite = false
+                throw RegistryTestFault.injected("after weights write, before version.json")
+            }
+
+            let metadata = AdapterVersion(
+                lineage: lineage,
+                version: versionNumber,
+                parentVersion: parentVersion,
+                trainedOn: trainedOn,
+                evalReport: evalReport,
+                status: .candidate,
+                weightsDigest: digest,
+                createdAt: Date()
+            )
+
+            // 3. version.json — last file before the version becomes visible.
+            try AtomicFileWriter.writeJSON(
+                metadata,
+                to: stagingDir.appendingPathComponent("version.json")
+            )
+
+            // Publish: single rename within the lineage directory (atomic on APFS/HFS+).
+            guard !fileManager.fileExists(atPath: versionDir.path) else {
+                try? fileManager.removeItem(at: stagingDir)
+                throw AdaptError.ioFailed(
+                    "Refusing to overwrite existing version directory v\(versionNumber)"
+                )
+            }
+            try fileManager.moveItem(at: stagingDir, to: versionDir)
+            try FileProtection.apply(versionDir)
+
+            return metadata
+        } catch {
+            // Leave staging in place only for injected crash tests; clean other failures.
+            // GC removes leftover staging directories either way.
+            if !(error is RegistryTestFault) {
+                try? fileManager.removeItem(at: stagingDir)
+            }
+            throw error
         }
-
-        let metadata = AdapterVersion(
-            lineage: lineage,
-            version: versionNumber,
-            parentVersion: parentVersion,
-            trainedOn: trainedOn,
-            evalReport: evalReport,
-            status: .candidate,
-            weightsDigest: digest,
-            createdAt: Date()
-        )
-
-        // 3. version.json
-        try AtomicFileWriter.writeJSON(
-            metadata,
-            to: versionDir.appendingPathComponent("version.json")
-        )
-
-        return metadata
     }
 
     /// Promotes a candidate (or any stored version) to active for its lineage.
     ///
-    /// Demotes the previous active version to `.rolledBack`, sets the new version
-    /// to `.active`, then atomically flips `state.json`. At most one active version
-    /// remains. Weight files are never moved.
+    /// Verifies weights integrity before flipping the pointer. Demotes the previous
+    /// active version to `.rolledBack`, sets the new version to `.active`, then
+    /// atomically flips `state.json`. At most one active version remains. Weight
+    /// files are never moved.
     public func promote(lineage: AdapterLineage, version: Int) throws {
         try promote(lineageID: lineage.lineageID, version: version)
     }
 
     /// Promotes by lineage ID (directory name).
+    ///
+    /// Always verifies weights integrity — an unverified adapter must never become active.
     public func promote(lineageID: String, version: Int) throws {
         let versionDir = versionDirectory(lineageID: lineageID, version: version)
         guard fileManager.fileExists(atPath: versionDir.path) else {
@@ -132,39 +168,28 @@ public actor AdapterRegistry {
         // Verify integrity before flipping the pointer.
         _ = try loadVersion(lineageID: lineageID, version: version, verifyIntegrity: true)
 
-        var state = try loadState(lineageID: lineageID)
-        let previousActive = state.activeVersion
-
-        if previousActive == version {
+        let state = try loadState(lineageID: lineageID)
+        if state.activeVersion == version {
             // Already active — ensure status field is correct and return.
             try updateVersionStatus(lineageID: lineageID, version: version, status: .active)
             return
         }
 
-        // Update version.json statuses first; state.json last (source of truth for active).
-        if let previousActive {
-            try updateVersionStatus(lineageID: lineageID, version: previousActive, status: .rolledBack)
-        }
-        try updateVersionStatus(lineageID: lineageID, version: version, status: .active)
-
-        if faultBeforePointerFlip {
-            faultBeforePointerFlip = false
-            throw AdaptError.injectedFault("before state.json pointer flip")
-        }
-
-        state.activeVersion = version
-        try AtomicFileWriter.writeJSON(state, to: stateURL(lineageID: lineageID))
+        try commitActivePointer(lineageID: lineageID, newActive: version)
     }
 
     /// Rolls back to a previous version via an O(1) pointer flip.
     ///
-    /// Does not move or rewrite weight files. The formerly active version is marked
-    /// `.rolledBack`. Passing a missing version fails without changing state.
+    /// Verifies the target's weights integrity before flipping. Does not move or
+    /// rewrite weight files. The formerly active version is marked `.rolledBack`.
+    /// Passing a missing version fails without changing state.
     public func rollback(lineage: AdapterLineage, to version: Int) throws {
         try rollback(lineageID: lineage.lineageID, to: version)
     }
 
     /// Rolls back by lineage ID.
+    ///
+    /// Always verifies weights integrity of the rollback target.
     public func rollback(lineageID: String, to version: Int) throws {
         let versionDir = versionDirectory(lineageID: lineageID, version: version)
         guard fileManager.fileExists(atPath: versionDir.path) else {
@@ -173,25 +198,12 @@ public actor AdapterRegistry {
 
         _ = try loadVersion(lineageID: lineageID, version: version, verifyIntegrity: true)
 
-        var state = try loadState(lineageID: lineageID)
-        let previousActive = state.activeVersion
-
-        if previousActive == version {
+        let state = try loadState(lineageID: lineageID)
+        if state.activeVersion == version {
             return
         }
 
-        if let previousActive {
-            try updateVersionStatus(lineageID: lineageID, version: previousActive, status: .rolledBack)
-        }
-        try updateVersionStatus(lineageID: lineageID, version: version, status: .active)
-
-        if faultBeforePointerFlip {
-            faultBeforePointerFlip = false
-            throw AdaptError.injectedFault("before state.json pointer flip on rollback")
-        }
-
-        state.activeVersion = version
-        try AtomicFileWriter.writeJSON(state, to: stateURL(lineageID: lineageID))
+        try commitActivePointer(lineageID: lineageID, newActive: version)
     }
 
     /// Clears the active pointer so the lineage uses base-model behavior.
@@ -201,34 +213,52 @@ public actor AdapterRegistry {
 
     /// Clears the active pointer by lineage ID.
     public func clearActive(lineageID: String) throws {
-        var state = try loadState(lineageID: lineageID)
-        if let previous = state.activeVersion {
-            try updateVersionStatus(lineageID: lineageID, version: previous, status: .rolledBack)
-        }
-        state.activeVersion = nil
-        try AtomicFileWriter.writeJSON(state, to: stateURL(lineageID: lineageID))
+        try commitActivePointer(lineageID: lineageID, newActive: nil)
     }
 
     /// Returns the active version metadata, or `nil` if none (base-model behavior).
-    public func activeVersion(for lineage: AdapterLineage) throws -> AdapterVersion? {
-        try activeVersion(lineageID: lineage.lineageID)
+    ///
+    /// By default this is a **metadata-only** read: it does **not** hash the
+    /// weights file. Integrity is enforced on promote/rollback and when loading
+    /// weights for train/inference. Pass `verifyIntegrity: true` to demand a
+    /// full SHA-256 check of `adapters.safetensors`.
+    public func activeVersion(
+        for lineage: AdapterLineage,
+        verifyIntegrity: Bool = false
+    ) throws -> AdapterVersion? {
+        try activeVersion(lineageID: lineage.lineageID, verifyIntegrity: verifyIntegrity)
     }
 
     /// Returns the active version by lineage ID.
-    public func activeVersion(lineageID: String) throws -> AdapterVersion? {
+    ///
+    /// - Parameter verifyIntegrity: When `true`, SHA-256s the weights file.
+    ///   Default `false` so polling the active pointer (e.g. session reload)
+    ///   stays cheap; use `true` when about to load weights.
+    public func activeVersion(
+        lineageID: String,
+        verifyIntegrity: Bool = false
+    ) throws -> AdapterVersion? {
         let state = try loadState(lineageID: lineageID)
         guard let version = state.activeVersion else { return nil }
-        return try loadVersion(lineageID: lineageID, version: version, verifyIntegrity: true)
+        return try loadVersion(
+            lineageID: lineageID,
+            version: version,
+            verifyIntegrity: verifyIntegrity
+        )
     }
 
-    /// Lists all stored versions for a lineage, sorted by version number ascending.
+    /// Lists all **complete, readable** stored versions for a lineage, sorted
+    /// by version number ascending.
     ///
-    /// Status fields are reconciled against `state.json` so at most one reports `.active`.
+    /// Incomplete or unreadable `vN` directories (missing/corrupt `version.json`)
+    /// and staging leftovers are skipped so a single bad directory cannot take
+    /// down the lineage. Status fields are reconciled against `state.json` so
+    /// at most one reports `.active`.
     public func listVersions(for lineage: AdapterLineage) throws -> [AdapterVersion] {
         try listVersions(lineageID: lineage.lineageID)
     }
 
-    /// Lists versions by lineage ID.
+    /// Lists complete versions by lineage ID. Partial/unreadable directories are ignored.
     public func listVersions(lineageID: String) throws -> [AdapterVersion] {
         let lineageDir = lineageDirectory(for: lineageID)
         guard fileManager.fileExists(atPath: lineageDir.path) else {
@@ -250,11 +280,17 @@ public actor AdapterRegistry {
         var versions: [AdapterVersion] = []
         for url in contents {
             let name = url.lastPathComponent
-            guard name.hasPrefix("v"),
-                  let number = Int(name.dropFirst())
-            else { continue }
+            guard let number = Self.parseVersionDirectoryName(name) else { continue }
 
-            var meta = try loadVersion(lineageID: lineageID, version: number, verifyIntegrity: false)
+            // Skip incomplete/unreadable versions rather than failing the lineage.
+            guard var meta = try? loadVersion(
+                lineageID: lineageID,
+                version: number,
+                verifyIntegrity: false
+            ) else {
+                continue
+            }
+
             // Reconcile status with state.json (source of truth for active).
             if state.activeVersion == number {
                 meta = meta.with(status: .active)
@@ -267,6 +303,9 @@ public actor AdapterRegistry {
     }
 
     /// Loads one version and optionally verifies the weights digest.
+    ///
+    /// - Parameter verifyIntegrity: Defaults to `true` because callers typically
+    ///   load a specific version in order to use its weights.
     public func version(
         for lineage: AdapterLineage,
         version: Int,
@@ -293,16 +332,19 @@ public actor AdapterRegistry {
     /// Deletes old versions, keeping the most recent `keepLast` plus always the active one.
     ///
     /// Never deletes the active version regardless of `keepLast`. Archived/candidate
-    /// versions outside the retention window are removed from disk.
+    /// versions outside the retention window are removed from disk. Also removes
+    /// leftover `.staging-*` directories (crashed mid-store garbage).
     public func gc(lineage: AdapterLineage, keepLast: Int) throws {
         try gc(lineageID: lineage.lineageID, keepLast: keepLast)
     }
 
-    /// GC by lineage ID.
+    /// GC by lineage ID. Also purges staging leftovers.
     public func gc(lineageID: String, keepLast: Int) throws {
         guard keepLast >= 0 else {
             throw AdaptError.invalidOperation("keepLast must be >= 0")
         }
+
+        try removeStagingDirectories(lineageID: lineageID)
 
         let versions = try listVersions(lineageID: lineageID)
         guard !versions.isEmpty else { return }
@@ -345,9 +387,51 @@ public actor AdapterRegistry {
 
     // MARK: - Internals
 
+    /// Parses `"v12"` → `12`; returns nil for staging dirs and other names.
+    private static func parseVersionDirectoryName(_ name: String) -> Int? {
+        guard name.hasPrefix("v"), name.count > 1 else { return nil }
+        return Int(name.dropFirst())
+    }
+
+    /// Next free version number for `lineageID`.
+    ///
+    /// **Invariant:** the next number is `1 + max` over **every** on-disk
+    /// directory named `v<N>` (complete, partial, or unreadable). We deliberately
+    /// do **not** use only `listVersions`, which skips incomplete directories —
+    /// otherwise a leftover partial `v2/` would cause the next store to reuse `2`
+    /// and collide on the publish rename. Staging dirs (`.staging-*`) are never
+    /// version numbers and do not affect allocation.
     private func nextVersionNumber(lineageID: String) throws -> Int {
-        let versions = try listVersions(lineageID: lineageID)
-        return (versions.map(\.version).max() ?? 0) + 1
+        let maxOnDisk = try highestVersionDirectoryNumber(lineageID: lineageID)
+        return maxOnDisk + 1
+    }
+
+    /// Highest `N` among sibling directories named `vN`, or `0` if none.
+    private func highestVersionDirectoryNumber(lineageID: String) throws -> Int {
+        let lineageDir = lineageDirectory(for: lineageID)
+        guard fileManager.fileExists(atPath: lineageDir.path) else { return 0 }
+
+        let contents: [URL]
+        do {
+            // Include hidden names so we still see everything; version dirs are not hidden.
+            contents = try fileManager.contentsOfDirectory(
+                at: lineageDir,
+                includingPropertiesForKeys: [.isDirectoryKey],
+                options: []
+            )
+        } catch {
+            throw AdaptError.ioFailed(
+                "Failed to scan version dirs for \(lineageID): \(error.localizedDescription)"
+            )
+        }
+
+        var maxN = 0
+        for url in contents {
+            if let n = Self.parseVersionDirectoryName(url.lastPathComponent) {
+                maxN = max(maxN, n)
+            }
+        }
+        return maxN
     }
 
     private func loadState(lineageID: String) throws -> LineageState {
@@ -408,6 +492,61 @@ public actor AdapterRegistry {
         let meta = try AtomicFileWriter.readJSON(AdapterVersion.self, from: metaURL)
         let updated = meta.with(status: status)
         try AtomicFileWriter.writeJSON(updated, to: metaURL)
+    }
+
+    /// Shared pointer-flip used by `promote`, `rollback`, and `clearActive`.
+    ///
+    /// Sequence: demote previous active's `version.json` → set target's
+    /// `version.json` (if any) → optionally inject a test fault → atomically
+    /// write `state.json`. Callers are responsible for existence/integrity checks
+    /// and for the "already active" short-circuit where behavior differs.
+    private func commitActivePointer(lineageID: String, newActive: Int?) throws {
+        var state = try loadState(lineageID: lineageID)
+        let previousActive = state.activeVersion
+
+        if let previousActive, previousActive != newActive {
+            try updateVersionStatus(lineageID: lineageID, version: previousActive, status: .rolledBack)
+        }
+        if let newActive {
+            try updateVersionStatus(lineageID: lineageID, version: newActive, status: .active)
+        }
+
+        if faultBeforePointerFlip {
+            faultBeforePointerFlip = false
+            throw RegistryTestFault.injected("before state.json pointer flip")
+        }
+
+        state.activeVersion = newActive
+        try AtomicFileWriter.writeJSON(state, to: stateURL(lineageID: lineageID))
+    }
+
+    /// Removes leftover `.staging-*` directories under a lineage (crashed stores).
+    private func removeStagingDirectories(lineageID: String) throws {
+        let lineageDir = lineageDirectory(for: lineageID)
+        guard fileManager.fileExists(atPath: lineageDir.path) else { return }
+
+        let contents: [URL]
+        do {
+            contents = try fileManager.contentsOfDirectory(
+                at: lineageDir,
+                includingPropertiesForKeys: [.isDirectoryKey],
+                options: []
+            )
+        } catch {
+            throw AdaptError.ioFailed(
+                "Failed to list staging dirs for \(lineageID): \(error.localizedDescription)"
+            )
+        }
+
+        for url in contents where url.lastPathComponent.hasPrefix(Self.stagingPrefix) {
+            do {
+                try fileManager.removeItem(at: url)
+            } catch {
+                throw AdaptError.ioFailed(
+                    "Failed to remove staging \(url.lastPathComponent): \(error.localizedDescription)"
+                )
+            }
+        }
     }
 
     /// SHA-256 hex digest of `data`.

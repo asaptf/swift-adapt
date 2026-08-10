@@ -12,8 +12,6 @@ public enum AdaptError: Error, LocalizedError, Sendable, Equatable {
     case ioFailed(String)
     /// JSON encode/decode of registry files failed.
     case codingFailed(String)
-    /// Injected fault for crash-safety tests (not used in production paths).
-    case injectedFault(String)
 
     public var errorDescription: String? {
         switch self {
@@ -27,8 +25,6 @@ public enum AdaptError: Error, LocalizedError, Sendable, Equatable {
             return "I/O failed: \(message)"
         case .codingFailed(let message):
             return "Coding failed: \(message)"
-        case .injectedFault(let message):
-            return "Injected fault: \(message)"
         }
     }
 }
