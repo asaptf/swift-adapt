@@ -31,7 +31,19 @@ Adapter loading, hot-swap, and streaming generation over `mlx-swift-lm`.
 | `ModelSource` | `.id(_:revision:)` or `.directory(_:)` |
 | `GenerationOptions` | maxTokens / temperature / seed / topP / repetitionPenalty / repetitionContextSize |
 | `AdaptModelLoader` | Load `ModelContainer` / `ModelContext` via protocol seams |
-| `AdaptInferenceError` | One module error enum (`LocalizedError`) |
+| `AdaptInferenceError` | One module error enum (`LocalizedError`), including `promptFormatMismatch` |
+
+### Prompt formatting (must match training)
+
+Generation encodes the user prompt through **`SFTPromptFormatter`** under the
+same `PromptFormatConvention` AdaptTrain used:
+
+- Chat template when the tokenizer provides one (user turn + start-of-assistant).
+- Raw concatenation when it does not.
+
+The active adapter's `AdapterVersion.promptFormat` is checked on load. A
+mismatch (e.g. raw-trained adapter on a chat-template session) throws
+`AdaptInferenceError.promptFormatMismatch` — never silently re-encodes.
 
 ### `AdaptSession` ergonomics
 

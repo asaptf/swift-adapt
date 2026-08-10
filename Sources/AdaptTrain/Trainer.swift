@@ -32,6 +32,9 @@ public actor Trainer {
 
     private let dataSource: any TrainingDataSource
 
+    /// Prompt format used by the current LLM run (recorded on checkpoints).
+    private var activePromptFormat: PromptFormatConvention?
+
     /// Optional thermal-state override for tests (`package` — not public API).
     package var thermalStateOverride: ProcessInfo.ThermalState?
 
@@ -94,7 +97,8 @@ public actor Trainer {
             model: model,
             loss: loss,
             microbatch: microbatch,
-            onStep: onStep
+            onStep: onStep,
+            promptFormat: nil
         )
     }
 
@@ -145,6 +149,10 @@ public actor Trainer {
 
         let maxLen = config.maxSequenceLength
         let tok = tokenizer
+        // Detect once per run so train batches and stored metadata agree.
+        let promptFormat = SFTPromptFormatter.detectConvention(
+            tokenizer: PromptCompletionBatch.sftTokenizer(tok)
+        )
 
         // Build micro-batches from the same snapshot used for datasetCount / window.
         let micro = SendingMicrobatch { indices in
@@ -155,7 +163,8 @@ public actor Trainer {
                 if let t = PromptCompletionBatch.tokenize(
                     examples[i],
                     tokenizer: tok,
-                    maxLength: maxLen
+                    maxLength: maxLen,
+                    convention: promptFormat
                 ) {
                     batch.append(t)
                 }
@@ -170,7 +179,8 @@ public actor Trainer {
             model: SendingModule(trainable),
             loss: SendingLoss(Self.llmCompletionLoss),
             microbatch: micro,
-            onStep: onStep
+            onStep: onStep,
+            promptFormat: promptFormat
         )
     }
 
@@ -203,8 +213,11 @@ public actor Trainer {
         model: SendingModule,
         loss: SendingLoss,
         microbatch: SendingMicrobatch,
-        onStep: (@Sendable (TrainStepProgress) -> Void)?
+        onStep: (@Sendable (TrainStepProgress) -> Void)?,
+        promptFormat: PromptFormatConvention?
     ) async throws -> TrainOutcome {
+        // Stash for checkpoint metadata (LLM path sets this; synthetic MSE path leaves nil).
+        self.activePromptFormat = promptFormat
         try validate(budget: budget, config: config)
         Memory.memoryLimit = budget.maxMemoryMB * 1_024 * 1_024
 
@@ -356,7 +369,8 @@ public actor Trainer {
             lineage: lineage,
             weights: weights,
             trainedOn: window,
-            parentVersion: parent
+            parentVersion: parent,
+            promptFormat: activePromptFormat
         )
 
         let dir = await registry.directoryURL(for: lineage, version: stored.version)

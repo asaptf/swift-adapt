@@ -99,11 +99,29 @@ struct BridgedTokenizer: MLXLMCommon.Tokenizer, @unchecked Sendable {
         tools: [[String: any Sendable]]?,
         additionalContext: [String: any Sendable]?
     ) throws -> [Int] {
+        // Adapt's SFT formatter passes `add_generation_prompt` via additionalContext.
+        // Default: true for user-last (inference); false when last role is assistant
+        // (full training sequence). Explicit context key always wins.
+        var addGenerationPrompt = true
+        if let last = messages.last, let role = last["role"] as? String, role == "assistant" {
+            addGenerationPrompt = false
+        }
+        var jinjaContext = additionalContext ?? [:]
+        if let explicit = jinjaContext["add_generation_prompt"] as? Bool {
+            addGenerationPrompt = explicit
+            jinjaContext.removeValue(forKey: "add_generation_prompt")
+        }
+        let contextForJinja: [String: any Sendable]? = jinjaContext.isEmpty ? nil : jinjaContext
         do {
+            // Full protocol signature — short overloads hard-code addGenerationPrompt: true.
             return try upstream.applyChatTemplate(
                 messages: messages,
+                chatTemplate: nil,
+                addGenerationPrompt: addGenerationPrompt,
+                truncation: false,
+                maxLength: nil,
                 tools: tools,
-                additionalContext: additionalContext
+                additionalContext: contextForJinja
             )
         } catch Tokenizers.TokenizerError.missingChatTemplate {
             throw MLXLMCommon.TokenizerError.missingChatTemplate

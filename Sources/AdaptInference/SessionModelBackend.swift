@@ -1,3 +1,4 @@
+import AdaptCore
 import Foundation
 
 /// Package-internal model/adapter backend used by ``AdaptSession``.
@@ -23,6 +24,11 @@ package protocol SessionModelBackend: AnyObject, Sendable {
     /// Whether adapters have been permanently fused into the base weights.
     var isFused: Bool { get }
 
+    /// Prompt formatting convention detected (or configured) for this backend.
+    ///
+    /// Production backends probe the tokenizer once; fakes return a configured value.
+    var promptFormatConvention: PromptFormatConvention { get }
+
     /// Apply a registry version directory (`adapter_config.json` +
     /// `adapters.safetensors`) as live LoRA layers.
     func loadAdapter(from directory: URL) async throws
@@ -39,6 +45,9 @@ package protocol SessionModelBackend: AnyObject, Sendable {
     ///
     /// Must honor cooperative cancellation (`Task.isCancelled`) between chunks
     /// so stopping the consuming task ends generation promptly.
+    ///
+    /// Encoding of `prompt` must go through ``SFTPromptFormatter`` under
+    /// `promptFormatConvention` so it matches training.
     func generate(
         prompt: String,
         options: GenerationOptions

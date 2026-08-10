@@ -1,3 +1,4 @@
+import AdaptCore
 import Foundation
 
 /// Errors originating from AdaptInference operations.
@@ -17,6 +18,11 @@ public enum AdaptInferenceError: Error, LocalizedError, Sendable, Equatable {
     case generationFailed(String)
     /// Session was fused; adapter hot-swap is no longer possible.
     case fusedImmutable(String)
+    /// Adapter was trained under a different prompt-format convention than this session.
+    ///
+    /// Serving a raw-trained adapter through a chat template (or the reverse)
+    /// produces subtly wrong output with no other failure signal — refuse loudly.
+    case promptFormatMismatch(adapter: PromptFormatConvention, session: PromptFormatConvention)
 
     public var errorDescription: String? {
         switch self {
@@ -32,6 +38,10 @@ public enum AdaptInferenceError: Error, LocalizedError, Sendable, Equatable {
             return "Generation failed: \(message)"
         case .fusedImmutable(let message):
             return "Fused session is immutable: \(message)"
+        case .promptFormatMismatch(let adapter, let session):
+            return
+                "Prompt format mismatch: adapter was trained with \(adapter.rawValue), "
+                + "session uses \(session.rawValue)"
         }
     }
 }

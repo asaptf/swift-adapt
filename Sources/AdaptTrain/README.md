@@ -48,16 +48,39 @@ resumes from the previous complete checkpoint).
 
 ## Prompt / completion masking
 
-See `PromptCompletionBatch`:
+Formatting is owned by **`AdaptCore.SFTPromptFormatter`** (shared with
+AdaptInference) so train and generate cannot silently disagree:
 
-1. Encode prompt (with specials) and completion (without) separately; concatenate.
-2. Teacher-forcing shift: inputs = tokens[:-1], targets = tokens[1:].
-3. **Loss only on completion tokens** (`predictedIndex >= promptTokenCount`).
-4. Padding masked via length.
-5. **`TrainingExample.weight`** multiplies per-token CE (defaults from
+1. **Detect** whether the tokenizer has a chat template
+   (`PromptFormatConvention.chatTemplate` vs `.rawConcatenation`).
+2. **Chat template:** apply the template over user (`prompt`) + assistant
+   (`completion`); `promptTokenCount` is the generation-prefix length (user
+   turn + start-of-assistant marker). Scaffold tokens are **not** supervised.
+3. **Raw fallback** (no template): `encode(prompt) + encode(completion)` —
+   same rule on the generate path.
+4. Teacher-forcing shift: inputs = tokens[:-1], targets = tokens[1:].
+5. **Loss only on assistant/completion tokens** (`predictedIndex >= promptTokenCount`).
+6. Padding masked via length.
+7. **`TrainingExample.weight`** multiplies per-token CE (defaults from
    `SignalSource.defaultWeight`). Not deferred — weighted in the objective.
 
+The convention is written into `AdapterVersion.promptFormat` so a session that
+would serve the adapter under a different convention fails with a typed error.
+
 M3 held-out perplexity must use the same mask so numbers are comparable.
+
+### Recipe finding → M3 (do not mini-build a gate here)
+
+A controlled Qwen3-4B run (rank-8, 300 steps, 50-example fixture) memorized:
+loss collapsed to **0.001** (~6 epochs) and fixture vocabulary (`lane`,
+`cycle`, `scrap-side`) bled into unrelated answers. A 0.6B run at 100 steps
+ended at loss ~2.62 without that collapse.
+
+**M3's eval gate** (§4.5) already owns the correct response: pinned held-out
+set, paired comparison, Wilcoxon, abstain below a floor. Do **not** add early
+stopping or a held-out split inside AdaptTrain as a stopgap — it would be
+thrown away. Until M3 lands, keep CLI step defaults conservative on small
+corpora (see `adapt-cli` README).
 
 ## Budget & cancellation
 

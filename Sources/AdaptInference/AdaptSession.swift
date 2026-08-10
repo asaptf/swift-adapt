@@ -84,7 +84,7 @@ public actor AdaptSession {
         )
         self.lineage = lineage
         self.registry = registry
-        self.backend = MLXSessionBackend(container: container)
+        self.backend = await MLXSessionBackend(container: container)
         if loadActiveAdapter {
             try await self.applyActiveAdapter(force: true)
         }
@@ -102,7 +102,7 @@ public actor AdaptSession {
     ) async throws {
         self.lineage = lineage
         self.registry = registry
-        self.backend = MLXSessionBackend(container: container)
+        self.backend = await MLXSessionBackend(container: container)
         if loadActiveAdapter {
             try await self.applyActiveAdapter(force: true)
         }
@@ -128,6 +128,11 @@ public actor AdaptSession {
         }
     }
 
+    /// Prompt-format convention of the bound backend (chat template or raw).
+    public var promptFormatConvention: PromptFormatConvention {
+        backend.promptFormatConvention
+    }
+
     // MARK: - Generation
 
     /// Streams decoded text for `prompt` under the currently bound adapter
@@ -137,7 +142,9 @@ public actor AdaptSession {
     /// the session reusable. Does not change the bound adapter.
     ///
     /// - Parameters:
-    ///   - prompt: Raw prompt text (no chat template — matches AdaptTrain SFT).
+    ///   - prompt: User-turn text. Encoded via ``SFTPromptFormatter`` under the
+    ///     session's prompt-format convention (chat template when available,
+    ///     otherwise raw concatenation) — identical to AdaptTrain SFT.
     ///   - options: Sampling / length controls.
     /// - Returns: An async sequence of decoded string chunks.
     public func generate(
@@ -288,6 +295,17 @@ public actor AdaptSession {
 
         if !force, loadedVersion == active.version, backend.hasAdapterLoaded {
             return
+        }
+
+        // Refuse cross-convention serve: adapter trained raw must not be
+        // conditioned through a chat template (or the reverse).
+        let adapterFormat = SFTPromptFormatter.convention(fromStored: active.promptFormat)
+        let sessionFormat = backend.promptFormatConvention
+        if adapterFormat != sessionFormat {
+            throw AdaptInferenceError.promptFormatMismatch(
+                adapter: adapterFormat,
+                session: sessionFormat
+            )
         }
 
         let directory = await registry.directoryURL(for: lineage, version: active.version)

@@ -12,12 +12,20 @@ public struct TokenizedExample: Sendable, Hashable {
     public let promptTokenCount: Int
     /// Importance weight from `TrainingExample.weight`.
     public let weight: Float
+    /// Formatting convention used to produce `tokens`.
+    public let convention: PromptFormatConvention
 
     /// Creates a tokenized example.
-    public init(tokens: [Int], promptTokenCount: Int, weight: Float) {
+    public init(
+        tokens: [Int],
+        promptTokenCount: Int,
+        weight: Float,
+        convention: PromptFormatConvention = .rawConcatenation
+    ) {
         self.tokens = tokens
         self.promptTokenCount = promptTokenCount
         self.weight = weight
+        self.convention = convention
     }
 }
 
@@ -25,35 +33,83 @@ public struct TokenizedExample: Sendable, Hashable {
 ///
 /// ## Masking convention (honored by M3 held-out perplexity)
 ///
-/// 1. Encode `prompt` and `completion` **separately** with the tokenizer
-///    (`encode(text:addSpecialTokens:)` — specials on the prompt only by default
-///    via `encode(text:)`; completion uses `addSpecialTokens: false` so BOS is
-///    not injected mid-sequence).
-/// 2. Concatenate: `tokens = promptTokens + completionTokens`.
+/// Formatting is owned by ``SFTPromptFormatter`` (AdaptCore) so train and
+/// generate share one code path:
+///
+/// 1. **Chat template** (when the tokenizer has one): apply the template over
+///    user + assistant turns; `promptTokenCount` is the generation-prefix
+///    length (user turn + start-of-assistant marker). Scaffold tokens are not
+///    supervised.
+/// 2. **Raw fallback** (no template): `encode(prompt) + encode(completion)` —
+///    same rule train and generate use.
 /// 3. Teacher-forcing: `inputs = tokens[..<n-1]`, `targets = tokens[1...]`.
 /// 4. **Loss mask:** a target at sequence position `i` (predicting `tokens[i+1]`)
-///    contributes only when `i + 1 >= promptTokenCount` — i.e. only completion
-///    tokens are supervised. The first completion token is predicted from the
-///    last prompt token, which is intentional.
+///    contributes only when `i + 1 >= promptTokenCount` — i.e. only assistant /
+///    completion tokens are supervised.
 /// 5. Padding positions are also masked (length mask), matching `LoRATrain.loss`.
 /// 6. **Example weights:** each example's CE is multiplied by `TrainingExample.weight`
 ///    before the batch mean, so `SignalSource` importance is honored in the objective.
 public enum PromptCompletionBatch {
+    /// Wraps an `MLXLMCommon.Tokenizer` for ``SFTPromptFormatter``.
+    public static func sftTokenizer(_ tokenizer: any Tokenizer) -> AnySFTTokenizer {
+        AnySFTTokenizer(
+            encode: { text, addSpecial in
+                tokenizer.encode(text: text, addSpecialTokens: addSpecial)
+            },
+            applyChatTemplate: { messages, addGenerationPrompt in
+                do {
+                    let sendable: [[String: any Sendable]] = messages.map { dict in
+                        dict.mapValues { $0 as any Sendable }
+                    }
+                    return try tokenizer.applyChatTemplate(
+                        messages: sendable,
+                        tools: nil,
+                        additionalContext: ["add_generation_prompt": addGenerationPrompt]
+                    )
+                } catch TokenizerError.missingChatTemplate {
+                    throw SFTFormattingError.missingChatTemplate
+                }
+            }
+        )
+    }
+
     /// Tokenizes a training example; returns `nil` if empty or over `maxLength`.
     public static func tokenize(
         _ example: TrainingExample,
         tokenizer: any Tokenizer,
-        maxLength: Int
+        maxLength: Int,
+        convention: PromptFormatConvention
     ) -> TokenizedExample? {
-        let promptIDs = tokenizer.encode(text: example.prompt, addSpecialTokens: true)
-        let completionIDs = tokenizer.encode(text: example.completion, addSpecialTokens: false)
-        guard !completionIDs.isEmpty else { return nil }
-        let tokens = promptIDs + completionIDs
-        guard tokens.count >= 2, tokens.count <= maxLength else { return nil }
+        let sft = sftTokenizer(tokenizer)
+        return tokenize(example, sftTokenizer: sft, maxLength: maxLength, convention: convention)
+    }
+
+    /// Tokenizes via an ``SFTTokenizing`` (shared with inference tests).
+    public static func tokenize(
+        _ example: TrainingExample,
+        sftTokenizer: some SFTTokenizing,
+        maxLength: Int,
+        convention: PromptFormatConvention
+    ) -> TokenizedExample? {
+        let formatted: SFTTrainingTokens
+        do {
+            formatted = try SFTPromptFormatter.formatTraining(
+                prompt: example.prompt,
+                completion: example.completion,
+                tokenizer: sftTokenizer,
+                convention: convention
+            )
+        } catch {
+            return nil
+        }
+        guard formatted.tokens.count >= 2, formatted.tokens.count <= maxLength else {
+            return nil
+        }
         return TokenizedExample(
-            tokens: tokens,
-            promptTokenCount: promptIDs.count,
-            weight: Float(example.weight)
+            tokens: formatted.tokens,
+            promptTokenCount: formatted.promptTokenCount,
+            weight: Float(example.weight),
+            convention: formatted.convention
         )
     }
 
