@@ -1,4 +1,5 @@
 // swift-tools-version: 6.0
+import CompilerPluginSupport
 import PackageDescription
 
 let package = Package(
@@ -15,6 +16,7 @@ let package = Package(
         .library(name: "AdaptInference", targets: ["AdaptInference"]),
         .library(name: "AdaptEval", targets: ["AdaptEval"]),
         .library(name: "AdaptSchedule", targets: ["AdaptSchedule"]),
+        .library(name: "AdaptMacros", targets: ["AdaptMacros"]),
         .executable(name: "adapt-cli", targets: ["adapt-cli"]),
     ],
     dependencies: [
@@ -25,6 +27,9 @@ let package = Package(
         // CLI-only model download + tokenization (mlx-swift-lm 3.x decoupled these).
         .package(url: "https://github.com/huggingface/swift-huggingface", from: "0.9.0"),
         .package(url: "https://github.com/huggingface/swift-transformers", from: "1.3.0"),
+        // Macros only. Range matches mlx-swift-lm (602.0.0..<604.0.0) so the graph
+        // resolves to one swift-syntax; do not widen past 603.x (§3 / §4.9).
+        .package(url: "https://github.com/swiftlang/swift-syntax.git", "602.0.0"..<"604.0.0"),
     ],
     targets: [
         .target(
@@ -91,6 +96,29 @@ let package = Package(
                 "AdaptTrain",
             ],
             path: "Sources/AdaptSchedule",
+            exclude: ["README.md"]
+        ),
+        // Compiler plugin implementing @Personalizable / @Prompt / @Completion.
+        .macro(
+            name: "AdaptMacrosPlugin",
+            dependencies: [
+                .product(name: "SwiftSyntaxMacros", package: "swift-syntax"),
+                .product(name: "SwiftCompilerPlugin", package: "swift-syntax"),
+                .product(name: "SwiftDiagnostics", package: "swift-syntax"),
+                .product(name: "SwiftSyntax", package: "swift-syntax"),
+                .product(name: "SwiftSyntaxBuilder", package: "swift-syntax"),
+            ],
+            path: "Sources/AdaptMacrosPlugin"
+        ),
+        // Public macro surface + PersonalizationSignal + capture into AdaptData.
+        .target(
+            name: "AdaptMacros",
+            dependencies: [
+                "AdaptCore",
+                "AdaptData",
+                "AdaptMacrosPlugin",
+            ],
+            path: "Sources/AdaptMacros",
             exclude: ["README.md"]
         ),
         // Pure CLI logic (JSONL, formatting, shared options) — testable offline.
@@ -202,6 +230,18 @@ let package = Package(
                 "AdaptTrain",
             ],
             path: "Tests/AdaptScheduleTests"
+        ),
+        .testTarget(
+            name: "AdaptMacrosTests",
+            dependencies: [
+                "AdaptMacros",
+                "AdaptMacrosPlugin",
+                "AdaptCore",
+                "AdaptData",
+                .product(name: "SwiftSyntaxMacros", package: "swift-syntax"),
+                .product(name: "SwiftSyntaxMacrosTestSupport", package: "swift-syntax"),
+            ],
+            path: "Tests/AdaptMacrosTests"
         ),
     ]
 )
