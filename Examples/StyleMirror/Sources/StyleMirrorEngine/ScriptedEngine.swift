@@ -198,10 +198,15 @@ public final class ScriptedEngine: StyleMirrorEngine, Sendable {
             throw StyleMirrorError.notFound("blind round '\(incomingEmailID)'")
         }
         // Scripted path: two synthetic units (base, adapter), human is corpus.
+        // Yield after each event so a UI handler that hops to MainActor via
+        // `Task { @MainActor in … }` can land (same contract as AdaptEngine).
         let total = 2
         progress?(GenerationProgress(completed: 0, total: total, unitLabel: "base model"))
+        await Task.yield()
         progress?(GenerationProgress(completed: 1, total: total, unitLabel: "base model"))
+        await Task.yield()
         progress?(GenerationProgress(completed: 2, total: total, unitLabel: "adapter"))
+        await Task.yield()
         return await state.prepareBlindRound(fixture: fixture)
     }
 
@@ -222,16 +227,19 @@ public final class ScriptedEngine: StyleMirrorEngine, Sendable {
         let total = DemoLanguage.allCases.count * 2
         var completed = 0
         progress?(GenerationProgress(completed: 0, total: total, unitLabel: "loading"))
+        await Task.yield()
         for language in DemoLanguage.allCases {
             let name = language.displayName.lowercased()
             completed += 1
             progress?(
                 GenerationProgress(completed: completed, total: total, unitLabel: "\(name) / base")
             )
+            await Task.yield()
             completed += 1
             progress?(
                 GenerationProgress(completed: completed, total: total, unitLabel: "\(name) / adapter")
             )
+            await Task.yield()
         }
         return canned
     }

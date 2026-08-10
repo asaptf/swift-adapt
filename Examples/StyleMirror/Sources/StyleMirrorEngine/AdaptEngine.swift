@@ -66,6 +66,25 @@ public final class AdaptEngine: StyleMirrorEngine, Sendable {
         try AdaptEngine(configuration: .seededDemo(), seed: seed)
     }
 
+    /// Generation knobs used by ``prepareBlindRound`` / ``codeSwitchingDemo``.
+    ///
+    /// Exposed for offline tests that assert sampling settings (e.g. repetition
+    /// penalty) map through to MLX `GenerateParameters` without loading a model.
+    public static func generationOptions(
+        for configuration: AdaptEngineConfiguration,
+        seed: UInt64
+    ) -> GenerationOptions {
+        GenerationOptions(
+            maxTokens: configuration.maxGenerateTokens,
+            temperature: configuration.temperature,
+            seed: seed,
+            topP: configuration.topP,
+            repetitionPenalty: configuration.repetitionPenalty,
+            repetitionContextSize: configuration.repetitionContextSize,
+            chatTemplateEnableThinking: false
+        )
+    }
+
     /// Bridges async registry promote into sync ``init`` so demo reset can
     /// rebuild the engine without an async factory.
     private static func restoreStartingSync(
@@ -199,6 +218,11 @@ extension AdaptEngine {
         var tally: BlindTestTally = .zero
         private var openRounds: [UUID: BlindRoundSupport.OpenRound] = [:]
         private var roundCounter: UInt64 = 0
+
+        /// Cached generation session so blind / code-switch do not re-load the
+        /// multi-gigabyte base model on every operation. First call pays the
+        /// load; subsequent calls only hot-swap LoRA via ``AdaptSession/reload()``.
+        private var generationSession: AdaptSession?
 
         init(
             registry: AdapterRegistry,
@@ -486,14 +510,17 @@ extension AdaptEngine {
             let options = generationOptions()
             let total = Self.blindGenerationUnitCount
 
-            progress?(GenerationProgress(completed: 0, total: total, unitLabel: "loading model"))
-
-            let session = try await DemoModelLoader.makeSession(
-                modelID: configuration.modelID,
-                lineage: lineage,
-                registry: registry,
-                loadActiveAdapter: false
+            // Emit + yield before the (possibly cold) model load so the UI's
+            // MainActor Task hop can paint a determinate indicator.
+            try await reportProgress(
+                progress,
+                GenerationProgress(completed: 0, total: total, unitLabel: "loading model")
             )
+
+            let session = try await sharedGenerationSession()
+            // Base column: no adapter. Does not thrash the registry pointer —
+            // only the live LoRA on the cached session.
+            try await ensureSessionBaseModel(session)
 
             let baseText: String
             do {
@@ -504,11 +531,12 @@ extension AdaptEngine {
                 )
             }
             try assertLengthClass(text: baseText, role: .baseModel)
-            progress?(
+            try await reportProgress(
+                progress,
                 GenerationProgress(completed: 1, total: total, unitLabel: "base model")
             )
 
-            try await session.reload()
+            try await ensureSessionActiveAdapter(session)
             let adaptedText: String
             do {
                 adaptedText = try await session.generateText(prompt: prompt, options: options)
@@ -518,7 +546,8 @@ extension AdaptEngine {
                 )
             }
             try assertLengthClass(text: adaptedText, role: .adaptedModel)
-            progress?(
+            try await reportProgress(
+                progress,
                 GenerationProgress(completed: 2, total: total, unitLabel: "adapter")
             )
 
@@ -570,34 +599,32 @@ extension AdaptEngine {
             }
 
             let total = Self.codeSwitchGenerationUnitCount
-            progress?(GenerationProgress(completed: 0, total: total, unitLabel: "loading model"))
-
             do {
-                let session = try await DemoModelLoader.makeSession(
-                    modelID: configuration.modelID,
-                    lineage: lineage,
-                    registry: registry,
-                    loadActiveAdapter: false
+                try await reportProgress(
+                    progress,
+                    GenerationProgress(completed: 0, total: total, unitLabel: "loading model")
                 )
+
+                // One cached session for all six generations. Previously each
+                // language did clearActive/promote (full weights digest on every
+                // promote) + session.reload; that was pure overhead on a warm model.
+                let session = try await sharedGenerationSession()
                 let options = generationOptions()
-                var results: [CodeSwitchLanguageResult] = []
+                var baseByLanguage: [DemoLanguage: String] = [:]
+                var adaptedByLanguage: [DemoLanguage: String] = [:]
                 var completed = 0
 
+                // All base replies first (adapter unloaded once).
+                try await ensureSessionBaseModel(session)
                 for language in DemoLanguage.allCases {
-                    // One prompt-construction path for both generations.
                     let prompt = BlindReplyPrompt.codeSwitchPrompt(
                         requestSummary: request,
                         language: language
                     )
                     let langName = language.displayName.lowercased()
-
-                    // Base (session started / restored without adapter).
                     // Length-class soft assert is blind-test only: code-switch
                     // columns intentionally show a short personal adapter style
-                    // against a stiffer base, and a soft floor of 20 words was
-                    // rejecting real adapter replies (~19 words) as empty success.
-                    try await registry.clearActive(lineage: lineage)
-                    try await session.reload()
+                    // against a stiffer base.
                     let baseText: String
                     do {
                         baseText = try await session.generateText(prompt: prompt, options: options)
@@ -606,18 +633,26 @@ extension AdaptEngine {
                             "\(langName) / base: \(error.localizedDescription)"
                         )
                     }
+                    baseByLanguage[language] = baseText
                     completed += 1
-                    progress?(
+                    try await reportProgress(
+                        progress,
                         GenerationProgress(
                             completed: completed,
                             total: total,
                             unitLabel: "\(langName) / base"
                         )
                     )
+                }
 
-                    // Adapter.
-                    try await registry.promote(lineage: lineage, version: activeBefore.version)
-                    try await session.reload()
+                // Adapter loaded once, then one generation per language.
+                try await ensureSessionActiveAdapter(session)
+                for language in DemoLanguage.allCases {
+                    let prompt = BlindReplyPrompt.codeSwitchPrompt(
+                        requestSummary: request,
+                        language: language
+                    )
+                    let langName = language.displayName.lowercased()
                     let adaptedText: String
                     do {
                         adaptedText = try await session.generateText(prompt: prompt, options: options)
@@ -626,27 +661,33 @@ extension AdaptEngine {
                             "\(langName) / adapter: \(error.localizedDescription)"
                         )
                     }
+                    adaptedByLanguage[language] = adaptedText
                     completed += 1
-                    progress?(
+                    try await reportProgress(
+                        progress,
                         GenerationProgress(
                             completed: completed,
                             total: total,
                             unitLabel: "\(langName) / adapter"
                         )
                     )
-
-                    results.append(
-                        CodeSwitchLanguageResult(
-                            language: language,
-                            baseReply: baseText,
-                            adaptedReply: adaptedText
-                        )
-                    )
                 }
 
-                // Ensure active pointer restored (last iteration already promoted).
+                // Registry active pointer was never cleared; restore only if something
+                // else moved it during the run.
                 if await activeVersion()?.version != activeBefore.version {
                     try await registry.promote(lineage: lineage, version: activeBefore.version)
+                }
+
+                let results = DemoLanguage.allCases.compactMap { language -> CodeSwitchLanguageResult? in
+                    guard let base = baseByLanguage[language],
+                          let adapted = adaptedByLanguage[language]
+                    else { return nil }
+                    return CodeSwitchLanguageResult(
+                        language: language,
+                        baseReply: base,
+                        adaptedReply: adapted
+                    )
                 }
 
                 return CodeSwitchResult(
@@ -655,8 +696,11 @@ extension AdaptEngine {
                     unavailabilityReason: nil
                 )
             } catch {
-                // Best-effort restore of active pointer.
-                try? await registry.promote(lineage: lineage, version: activeBefore.version)
+                // Active pointer is not mutated on the happy path; restore only if
+                // a concurrent operation (or a prior code path) moved it.
+                if await activeVersion()?.version != activeBefore.version {
+                    try? await registry.promote(lineage: lineage, version: activeBefore.version)
+                }
                 let reason: String
                 if let styleError = error as? StyleMirrorError {
                     reason = styleError.errorDescription ?? String(describing: styleError)
@@ -881,13 +925,84 @@ extension AdaptEngine {
 
         // MARK: Helpers
 
+        /// Maps demo configuration into ``GenerationOptions`` (including sampling
+        /// knobs). Package-visible via ``AdaptEngine/generationOptions(for:seed:)``
+        /// for offline tests that assert the penalty reaches MLX parameters.
         private func generationOptions() -> GenerationOptions {
-            GenerationOptions(
-                maxTokens: configuration.maxGenerateTokens,
-                temperature: configuration.temperature,
-                seed: seed,
-                chatTemplateEnableThinking: false
+            AdaptEngine.generationOptions(for: configuration, seed: seed)
+        }
+
+        /// Shared base+session for generation paths. Loads the multi-GB model at
+        /// most once per engine lifetime (or until the session is dropped).
+        private func sharedGenerationSession() async throws -> AdaptSession {
+            if let generationSession {
+                return generationSession
+            }
+            let session = try await DemoModelLoader.makeSession(
+                modelID: configuration.modelID,
+                lineage: lineage,
+                registry: registry,
+                loadActiveAdapter: false
             )
+            generationSession = session
+            return session
+        }
+
+        /// Unloads live LoRA so the next generation is pure base model.
+        ///
+        /// Uses ``AdaptSession/useBaseModel()`` — does **not** clear the registry
+        /// active pointer, so the UI timeline stays honest and we skip the
+        /// promote/clearActive digest thrash that previously ran per language.
+        private func ensureSessionBaseModel(_ session: AdaptSession) async throws {
+            if await session.loadedVersion == nil {
+                return
+            }
+            do {
+                try await session.useBaseModel()
+            } catch {
+                throw StyleMirrorError.generationFailed(
+                    "unload adapter for base generation: \(error.localizedDescription)"
+                )
+            }
+        }
+
+        /// Applies the registry active adapter onto the cached session.
+        private func ensureSessionActiveAdapter(_ session: AdaptSession) async throws {
+            let active = await activeVersion()
+            guard let active else {
+                throw StyleMirrorError.invalidState(
+                    "no active adapter while preparing adapted generation"
+                )
+            }
+            if await session.loadedVersion == active.version {
+                return
+            }
+            do {
+                // reload re-reads the active pointer and applies LoRA (integrity
+                // verified once per apply; skipped when already loaded).
+                try await session.reload()
+            } catch {
+                throw StyleMirrorError.generationFailed(
+                    "load active adapter: \(error.localizedDescription)"
+                )
+            }
+            if await session.loadedVersion != active.version {
+                throw StyleMirrorError.invalidState(
+                    "session loaded v\(await session.loadedVersion.map(String.init) ?? "nil") after reload; expected v\(active.version)"
+                )
+            }
+        }
+
+        /// Invokes the progress handler and yields so a UI handler that hops to
+        /// the MainActor via `Task { @MainActor in … }` can land between units.
+        /// Without the yield, long Metal work can starve the hop and the
+        /// indicator stays indeterminate for the whole operation.
+        private func reportProgress(
+            _ handler: GenerationProgressHandler?,
+            _ event: GenerationProgress
+        ) async throws {
+            handler?(event)
+            await Task.yield()
         }
 
         /// Surfaces large length-class misses without silent trimming.

@@ -110,6 +110,46 @@ struct AdaptSessionTests {
         #expect(text == "coldstart")
     }
 
+    // MARK: - useBaseModel (base-vs-adapter without registry thrash)
+
+    @Test("useBaseModel unloads adapter without changing registry active pointer")
+    func useBaseModelUnloadsWithoutRegistryChange() async throws {
+        let (reg, root) = try InferenceTestSupport.makeRegistry()
+        defer { InferenceTestSupport.teardown(root) }
+        let lineage = InferenceTestSupport.lineage
+        let stored = try await InferenceTestSupport.store(
+            registry: reg,
+            lineage: lineage,
+            weights: Data("adapter-base-swap".utf8),
+            promote: true
+        )
+        let dir = await reg.directoryURL(for: lineage, version: stored.version)
+
+        let fake = FakeSessionBackend(
+            baseChunks: ["base-only"],
+            adapterChunks: [dir.path: ["with-adapter"]]
+        )
+        let session = try await AdaptSession(
+            backend: fake,
+            lineage: lineage,
+            registry: reg
+        )
+        #expect(await session.loadedVersion == stored.version)
+        #expect(try await session.generateText(prompt: "p") == "with-adapter")
+
+        try await session.useBaseModel()
+        #expect(await session.loadedVersion == nil)
+        #expect(fake.unloadCount >= 1)
+        #expect(try await session.generateText(prompt: "p") == "base-only")
+
+        // Registry active pointer untouched — reload re-applies the same adapter.
+        let active = try await reg.activeVersion(for: lineage, verifyIntegrity: false)
+        #expect(active?.version == stored.version)
+        try await session.reload()
+        #expect(await session.loadedVersion == stored.version)
+        #expect(try await session.generateText(prompt: "p") == "with-adapter")
+    }
+
     // MARK: - reload without model reload
 
     @Test("reload after promotion swaps adapter without reloading the model")

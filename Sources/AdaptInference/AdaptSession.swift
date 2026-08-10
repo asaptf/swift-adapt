@@ -230,6 +230,27 @@ public actor AdaptSession {
         try await applyActiveAdapter(force: false)
     }
 
+    /// Unloads any live LoRA so the next generation uses the **base model only**.
+    ///
+    /// Does **not** change the registry active pointer. Call ``reload()`` to
+    /// re-apply the active adapter afterward. Useful for base-vs-adapter
+    /// comparisons that must not thrash promote/clearActive (and the full
+    /// weights-digest check those paths perform).
+    ///
+    /// After ``fuse()``, throws ``AdaptInferenceError/fusedImmutable(_:)``.
+    public func useBaseModel() async throws {
+        if isFused || backend.isFused {
+            throw AdaptInferenceError.fusedImmutable(
+                "useBaseModel() is unavailable after fuse(); create a new session for base-only inference"
+            )
+        }
+        await waitForGenerationsIdle()
+        if backend.hasAdapterLoaded {
+            try await backend.unloadAdapter()
+        }
+        loadedVersion = nil
+    }
+
     /// Permanently fuses the currently loaded adapter into the base weights.
     ///
     /// **Trade-off:** fused inference can be faster (no separate LoRA matmuls),

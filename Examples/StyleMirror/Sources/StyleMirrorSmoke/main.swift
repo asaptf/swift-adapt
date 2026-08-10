@@ -80,9 +80,7 @@ struct StyleMirrorSmoke {
                     }
                 }
                 let wall = wallStart.duration(to: .now)
-                let wallSec =
-                    Double(wall.components.seconds)
-                    + Double(wall.components.attoseconds) / 1e18
+                let wallSec = durationSeconds(wall)
                 if let last {
                     let lo = losses.min().map { String(format: "%.4f", $0) } ?? "n/a"
                     let hi = losses.max().map { String(format: "%.4f", $0) } ?? "n/a"
@@ -118,24 +116,46 @@ struct StyleMirrorSmoke {
                 let id = SampleCorpus.blindRounds[0].incoming.id
                 do {
                     let wallStart = ContinuousClock.now
+                    let timer = ProgressTimer(started: wallStart)
                     let progressBox = ProgressCollector()
                     let round = try await engine.prepareBlindRound(incomingEmailID: id) { event in
+                        let mark = timer.mark()
                         progressBox.append(event)
                         print(
-                            "  progress: \(event.completed)/\(event.total)\(event.unitLabel.map { " (\($0))" } ?? "")"
+                            String(
+                                format: "  progress: %d/%d%@  +%.2fs (t=%.2fs)",
+                                event.completed,
+                                event.total,
+                                event.unitLabel.map { " (\($0))" } ?? "",
+                                mark.delta,
+                                mark.elapsed
+                            )
                         )
                     }
-                    let wall = wallStart.duration(to: .now)
-                    let wallSec =
-                        Double(wall.components.seconds)
-                        + Double(wall.components.attoseconds) / 1e18
+                    let wallSec = durationSeconds(wallStart.duration(to: .now))
                     print(String(format: "  preparation wall=%.2fs", wallSec))
                     let progressEvents = progressBox.snapshot()
                     if let last = progressEvents.last {
                         print(
                             "  progress events: \(progressEvents.count) (final \(last.completed)/\(last.total))"
                         )
+                    } else {
+                        print("  progress events: 0 — HANDLER NEVER INVOKED")
                     }
+
+                    // Second call: model should already be cached on the engine.
+                    let warmStart = ContinuousClock.now
+                    let id2 = SampleCorpus.blindRounds[
+                        min(1, SampleCorpus.blindRounds.count - 1)
+                    ].incoming.id
+                    _ = try await engine.prepareBlindRound(incomingEmailID: id2)
+                    print(
+                        String(
+                            format: "  second-round wall=%.2fs (cached session expected)",
+                            durationSeconds(warmStart.duration(to: .now))
+                        )
+                    )
+
                     print("  incoming: \(round.incoming.subject)")
                     for (index, candidate) in round.candidates.enumerated() {
                         let label = Character(UnicodeScalar(65 + index)!)
@@ -154,17 +174,23 @@ struct StyleMirrorSmoke {
                 print("")
                 print("--- Code-switching (all languages) ---")
                 let wallStart = ContinuousClock.now
+                let timer = ProgressTimer(started: wallStart)
                 let progressBox = ProgressCollector()
                 let result = await engine.codeSwitchingDemo { event in
+                    let mark = timer.mark()
                     progressBox.append(event)
                     print(
-                        "  progress: \(event.completed)/\(event.total)\(event.unitLabel.map { " (\($0))" } ?? "")"
+                        String(
+                            format: "  progress: %d/%d%@  +%.2fs (t=%.2fs)",
+                            event.completed,
+                            event.total,
+                            event.unitLabel.map { " (\($0))" } ?? "",
+                            mark.delta,
+                            mark.elapsed
+                        )
                     )
                 }
-                let wall = wallStart.duration(to: .now)
-                let wallSec =
-                    Double(wall.components.seconds)
-                    + Double(wall.components.attoseconds) / 1e18
+                let wallSec = durationSeconds(wallStart.duration(to: .now))
                 print(String(format: "  wall=%.2fs", wallSec))
                 if let reason = result.unavailabilityReason {
                     print("  UNAVAILABLE: \(reason)")
@@ -175,10 +201,10 @@ struct StyleMirrorSmoke {
                     for pair in result.languages {
                         print("  --- \(pair.language.displayName) ---")
                         print(
-                            "  base:    \(pair.baseReply.count) chars — \(preview(pair.baseReply, max: 120))"
+                            "  base:    \(pair.baseReply.count) chars — \(preview(pair.baseReply, max: 200))"
                         )
                         print(
-                            "  adapter: \(pair.adaptedReply.count) chars — \(preview(pair.adaptedReply, max: 120))"
+                            "  adapter: \(pair.adaptedReply.count) chars — \(preview(pair.adaptedReply, max: 200))"
                         )
                     }
                     let progressEvents = progressBox.snapshot()
@@ -186,6 +212,8 @@ struct StyleMirrorSmoke {
                         print(
                             "  progress events: \(progressEvents.count) (final \(last.completed)/\(last.total))"
                         )
+                    } else {
+                        print("  progress events: 0 — HANDLER NEVER INVOKED")
                     }
                 }
             }
@@ -222,6 +250,12 @@ struct StyleMirrorSmoke {
         guard let idx = args.firstIndex(of: name), idx + 1 < args.count else { return nil }
         return Int(args[idx + 1])
     }
+
+}
+
+private func durationSeconds(_ duration: Duration) -> Double {
+    Double(duration.components.seconds)
+        + Double(duration.components.attoseconds) / 1e18
 }
 
 /// Thread-safe progress event bag for the smoke harness (progress callbacks
@@ -240,5 +274,32 @@ private final class ProgressCollector: @unchecked Sendable {
         lock.lock()
         defer { lock.unlock() }
         return events
+    }
+}
+
+/// Thread-safe wall-clock marks between progress events.
+private final class ProgressTimer: @unchecked Sendable {
+    private let lock = NSLock()
+    private let started: ContinuousClock.Instant
+    private var last: ContinuousClock.Instant
+
+    init(started: ContinuousClock.Instant) {
+        self.started = started
+        self.last = started
+    }
+
+    struct Mark {
+        let delta: Double
+        let elapsed: Double
+    }
+
+    func mark() -> Mark {
+        lock.lock()
+        defer { lock.unlock() }
+        let now = ContinuousClock.now
+        let delta = durationSeconds(last.duration(to: now))
+        let elapsed = durationSeconds(started.duration(to: now))
+        last = now
+        return Mark(delta: delta, elapsed: elapsed)
     }
 }
