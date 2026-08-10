@@ -370,6 +370,19 @@ public actor AdapterRegistry {
         versionDirectoryUnchecked(lineageID: lineage.lineageID, version: version)
     }
 
+    /// Absolute URL of a lineage directory (pin files, `state.json`, `vN/`).
+    ///
+    /// Used by AdaptEval to store `held_out_pin.json` **beside** the lineage
+    /// rather than in the replay buffer (architecture §4.5).
+    public func lineageDirectoryURL(for lineage: AdapterLineage) -> URL {
+        rootURL.appendingPathComponent(lineage.lineageID, isDirectory: true)
+    }
+
+    /// Absolute URL of a lineage directory by id.
+    public func lineageDirectoryURL(lineageID: String) throws -> URL {
+        try lineageDirectory(for: lineageID)
+    }
+
     /// Deletes old versions, keeping the most recent `keepLast` plus always the active one.
     ///
     /// Never deletes the active version regardless of `keepLast`. Archived/candidate
