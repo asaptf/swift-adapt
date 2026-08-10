@@ -89,7 +89,7 @@ adapt/
     └── adapt-cli/          // train/eval/inspect adapters from terminal
 ```
 
-**Dependencies:** `mlx-swift` (0.31.x), `mlx-swift-lm` (3.31.x — models, tokenizers, LoRA layers), `swift-syntax` (602–603, macros), `swift-argument-parser` (1.8.x, `adapt-cli` only — already a transitive dependency of `mlx-swift`). Nothing else. No networking beyond CloudKit and model download.
+**Dependencies:** `mlx-swift` (0.31.x), `mlx-swift-lm` (3.31.x — models, LoRA layers; tokenizers/download are protocol seams), `swift-syntax` (602–603, macros), `swift-argument-parser` (1.8.x, `adapt-cli` only — already a transitive dependency of `mlx-swift`). **CLI-only model I/O:** `swift-huggingface` + `swift-transformers` (adapters for `Downloader` / `Tokenizer` required by mlx-swift-lm 3.x; used only by `adapt-cli`, not library modules). Nothing else. No networking beyond CloudKit and model download.
 
 > Version pins verified against the toolchain in use (Swift 6.3.3 / Xcode 26.6): `mlx-swift` 0.31.6, `mlx-swift-lm` 3.31.4, `swift-syntax` 603.0.2. `mlx-swift-lm` constrains `swift-syntax` to `602.0.0..<604.0.0`, which the M5 macro target must respect.
 
@@ -393,8 +393,8 @@ Findings from reading the **pinned upstream source** (`mlx-swift` 0.31.6, `mlx-s
 ### M1 status
 
 - **Slice A — done, verified.** `AdaptCore` (types, stable lineage IDs, seeded PRNG) + `AdaptRegistry` (atomic promote/rollback/gc, integrity digests, crash-safe pointer flips). 25 tests, offline, no warnings under Swift 6 strict concurrency.
-- **Slice B1 — `AdaptTrain`**, carrying deltas 2–4.
-- **Slice B2 — `adapt-cli`** (`train` / `generate` / `inspect`) and the real-model acceptance demo of §6 M1.
+- **Slice B1 — `AdaptTrain`**, carrying deltas 2–4. Done, offline tests green.
+- **Slice B2 — `adapt-cli`** (`train` / `generate` / `inspect` / `promote`) and the real-model acceptance demo of §6 M1. Done: fixture corpus + manual protocol in `Tools/adapt-cli/README.md`.
 
 Unit tests are **network-free and model-free** throughout: MLX-level tests run against tiny synthetic modules and a stub tokenizer. Anything needing real weights is an opt-in suite, disabled by default.
 
